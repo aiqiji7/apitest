@@ -1,6 +1,6 @@
-<h1 align="center">New API 特殊调用测试</h1>
+<h1 align="center">AI API 特殊调用测试</h1>
 
-<p align="center">纯前端的 <a href="https://github.com/QuantumNous/new-api">New API</a> 调用测试页面，用来测试 OpenAI/Anthropic/Google 的一些特殊调用方式。所有数据仅在浏览器本地处理与保存。</p>
+<p align="center">纯前端的多厂商 API 调用测试页面，用来测试 OpenAI/Anthropic/Google 等 API 的特殊调用方式（工具调用、搜索、URL 上下文等）。所有数据仅在浏览器本地处理与保存。</p>
 
 <div align="center">
     <img src="example.png" alt="使用示例" />
@@ -31,7 +31,7 @@
 ## 如何使用
 
 1. **直接打开页面：**
-   - 用浏览器打开 https://cooksleep.github.io/newapi-special-test
+   - 用浏览器打开 https://aiqiji7.github.io/apitest
 2. **填写 API 信息：**
    - 在“API 配置”中填写 `API URL`、`API Key`、`模型`，或点击“管理配置”从右侧列表选择并应用。
 3. **选择测试类型：**

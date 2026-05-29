@@ -21,7 +21,6 @@
   const configListEl = $('#configList');
   const saveConfigBtn = $('#saveConfigBtn');
   const saveAsDefaultBtn = $('#saveAsDefaultBtn');
-  const saveSuccessEl = $('#saveSuccess');
   const cancelEditBtn = $('#cancelEditBtn');
   const configNameEl = $('#configName');
   const configUrlEl = $('#configUrl');
@@ -29,6 +28,18 @@
   const configModelEl = $('#configModel');
   const configModalTitleEl = $('#configModalTitle');
   const modalFormHeadingEl = $('#modalFormHeading');
+
+  // Image input elements
+  const imageInputArea = $('#imageInputArea');
+  const imageFileInput = $('#imageFileInput');
+  const imageUrlInput = $('#imageUrlInput');
+  const imagePreview = $('#imagePreview');
+  const previewImg = $('#previewImg');
+  const imageInfo = $('#imageInfo');
+  const removeImageBtn = $('#removeImageBtn');
+
+  // Image state
+  let currentImageData = null; // base64 data URL or external URL string
 
   // Edit state
   let editingIndex = null;
@@ -61,14 +72,8 @@
     if (!val) return val;
     // 自动补全协议
     if (!/^https?:\/\//i.test(val)) val = 'https://' + val;
-    try {
-      const url = new URL(val);
-      // 只保留 origin（协议+域名+端口），路径由系统在不同场景下添加
-      return url.origin;
-    } catch {
-      // URL 解析失败，仅去除尾部斜杠
-      return stripTrailingSlash(val);
-    }
+    // 仅去除尾部斜杠，保留完整路径（不截断到 origin，以支持子路径部署）
+    return stripTrailingSlash(val);
   }
   function buildEndpoint(base) { return stripTrailingSlash(base) + '/v1/chat/completions'; }
   function buildGeminiEndpoint(base, model, apiKey) {
@@ -89,13 +94,13 @@
   const SYSTEM_DEFAULTS = {
     apiUrl: ENV_CFG.apiUrl || 'https://api.openai.com',
     apiKey: ENV_CFG.apiKey || '',
-    model: ENV_CFG.model || 'gemini-2.5-pro'
+    model: ENV_CFG.model || 'gemini-3-flash-preview'
   };
 
   function displayConfigs() {
     const cfgs = loadConfigs();
     if (cfgs.length === 0) {
-      configListEl.innerHTML = '<p style="color:#64748b;text-align:center;">暂无保存的配置</p>';
+      configListEl.innerHTML = '<p class="config-list-empty">暂无保存的配置</p>';
       return;
     }
     configListEl.innerHTML = cfgs.map((c, i) => `
@@ -119,7 +124,6 @@
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path fill="currentColor" d="M9 3a1 1 0 0 0-1 1v1H5.5a1 1 0 1 0 0 2H6v11a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V7h.5a1 1 0 1 0 0-2H16V4a1 1 0 0 0-1-1H9zm6 2h-5V4h5v1zm-6 4a1 1 0 1 1 2 0v8a1 1 0 1 1-2 0V9zm5 0a1 1 0 1 1 2 0v8a1 1 0 1 1-2 0V9z"/>
             </svg>
-            <span class="q-badge">?</span>
           </button>
         </div>
       </div>
@@ -349,12 +353,7 @@
   }
 
   function appAlert(message) {
-    showToast(message, 'info');
-    return Promise.resolve(true);
-  }
-  function appConfirm(message) {
-    // Confirm 逻辑暂时保留原样或改为 Toast，但用户主要想要提示窗
-    return confirm(message);
+    return openAppModal({ title: '提示', content: message, showCancel: false, okText: '确定' });
   }
 
   // Apply config helpers
@@ -464,7 +463,7 @@
     }
   });
 
-  configListEl.addEventListener('click', (e) => {
+  configListEl.addEventListener('click', async (e) => {
     const starBtn = e.target.closest('[data-star]');
     if (starBtn) {
       const idx = parseInt(starBtn.getAttribute('data-star'), 10);
@@ -490,15 +489,8 @@
     const delBtn = e.target.closest('[data-del]');
     if (delBtn) {
       const idx = parseInt(delBtn.getAttribute('data-del'), 10);
-      // 二次确认逻辑：首次点击进入确认态，显示问号；再次点击才删除
-      if (!delBtn.classList.contains('confirm')) {
-        delBtn.classList.add('confirm');
-        // 定时自动恢复
-        if (delBtn._confirmTimer) clearTimeout(delBtn._confirmTimer);
-        delBtn._confirmTimer = setTimeout(() => { try { delBtn.classList.remove('confirm'); } catch { } delBtn._confirmTimer = null; }, 2500);
-        return;
-      }
-      if (delBtn._confirmTimer) { clearTimeout(delBtn._confirmTimer); delBtn._confirmTimer = null; }
+      const confirmed = await openAppModal({ title: '确认删除', content: '确定要删除此配置吗？', showCancel: true, okText: '删除', cancelText: '取消' });
+      if (!confirmed) return;
       const cfgs = loadConfigs();
       cfgs.splice(idx, 1);
       saveConfigs(cfgs);
@@ -590,7 +582,7 @@
     configNameEl.value = '';
     configUrlEl.value = '';
     configKeyEl.value = '';
-    configModelEl.value = SYSTEM_DEFAULTS.model;
+    configModelEl.value = '';
     saveConfigBtn.textContent = '保存配置';
     cancelEditBtn.style.display = 'none';
     if (saveAsDefaultBtn) saveAsDefaultBtn.style.display = '';
@@ -665,15 +657,18 @@
     openai: [
       { scenario: 'openai_tools', label: '工具调用 (Chat Completions)', defaultInput: 'RANDOM_CONVERT_TASK' },
       { scenario: 'responses_tools', label: '工具调用 (Responses)', defaultInput: 'RANDOM_CONVERT_TASK' },
-      { scenario: 'responses_search', label: '搜索 (Responses)', defaultInput: '搜索当前最新的Gemini旗舰模型是？' }
+      { scenario: 'responses_search', label: '搜索 (Responses)', defaultInput: '搜索当前最新的Gemini旗舰模型是？' },
+      { scenario: 'openai_image', label: '图片支持', defaultInput: '请描述这张图片' }
     ],
     anthropic: [
-      { scenario: 'anthropic_tools', label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' }
+      { scenario: 'anthropic_tools', label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
+      { scenario: 'anthropic_image', label: '图片支持', defaultInput: '请描述这张图片' }
     ],
     google: [
       { scenario: 'gemini_tools', label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
       { scenario: 'gemini_search', label: '搜索', defaultInput: '搜索当前最新的Gemini旗舰模型是？' },
-      { scenario: 'gemini_url_context', label: 'URL 上下文', defaultInput: '这个工具有哪些特点？https://ai.google.dev/gemini-api/docs/url-context' }
+      { scenario: 'gemini_url_context', label: 'URL 上下文', defaultInput: '这个工具有哪些特点？https://ai.google.dev/gemini-api/docs/url-context' },
+      { scenario: 'gemini_image', label: '图片支持', defaultInput: '请描述这张图片' }
     ]
   };
 
@@ -696,10 +691,28 @@
   // 当前选中的厂商
   let currentVendor = 'openai';
 
+  // 图片场景列表
+  const IMAGE_SCENARIOS = ['openai_image', 'anthropic_image', 'gemini_image'];
+  // 默认测试图片（A图片，可替换为自己的图片）
+  const DEFAULT_TEST_IMAGE = 'https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg';
+
   // 切换测试场景工具函数
   function applyScenarioInput(scenario, defaultInput) {
     const isToolScenario = ['openai_tools', 'anthropic_tools', 'gemini_tools', 'responses_tools'].includes(scenario);
+    const isImageScenario = IMAGE_SCENARIOS.includes(scenario);
     const label = document.querySelector('label[for="userInput"]');
+
+    // 图片场景：显示图片输入区域，并自动加载默认测试图片
+    if (isImageScenario) {
+      imageInputArea.style.display = '';
+      if (!currentImageData) {
+        loadImageUrl(DEFAULT_TEST_IMAGE);
+      }
+    } else {
+      imageInputArea.style.display = 'none';
+      // 退出图片场景时清理图片
+      clearImageInput();
+    }
 
     if (isToolScenario) {
       if (defaultInput === 'RANDOM_CONVERT_TASK') {
@@ -724,6 +737,81 @@
       if (hint) hint.remove();
     }
   }
+
+  // 清理图片输入
+  function clearImageInput() {
+    imageFileInput.value = '';
+    imageUrlInput.value = '';
+    imagePreview.style.display = 'none';
+    previewImg.src = '';
+    imageInfo.textContent = '';
+    currentImageData = null;
+  }
+
+  // 显示图片预览
+  function showImagePreview(src, info) {
+    previewImg.src = src;
+    imageInfo.textContent = info;
+    imagePreview.style.display = 'flex';
+  }
+
+  // 读取本地图片文件
+  function loadImageFile(file) {
+    if (!file) return;
+    // 校验文件类型
+    if (!file.type || !file.type.startsWith('image/')) {
+      appAlert('请选择图片文件');
+      return;
+    }
+    // 限制文件大小（10MB）
+    if (file.size > 10 * 1024 * 1024) {
+      appAlert('图片文件过大，请选择小于 10MB 的图片');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = function (e) {
+      currentImageData = e.target.result;
+      showImagePreview(currentImageData, `${file.name} (${(file.size / 1024).toFixed(1)}KB)`);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // 使用 URL 作为图片源
+  function loadImageUrl(url) {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    currentImageData = trimmed;
+    showImagePreview(trimmed, trimmed);
+  }
+
+  // 图片文件选择事件
+  imageFileInput.addEventListener('change', function () {
+    if (this.files && this.files[0]) {
+      loadImageFile(this.files[0]);
+      // 清空 URL 输入
+      imageUrlInput.value = '';
+    }
+  });
+
+  // 图片 URL 输入事件（回车确认）
+  imageUrlInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && this.value.trim()) {
+      // 清空文件选择
+      imageFileInput.value = '';
+      loadImageUrl(this.value);
+    }
+  });
+
+  // 图片 URL 失焦时加载
+  imageUrlInput.addEventListener('blur', function () {
+    if (this.value.trim()) {
+      imageFileInput.value = '';
+      loadImageUrl(this.value);
+    }
+  });
+
+  // 移除图片
+  removeImageBtn.addEventListener('click', clearImageInput);
 
   // 渲染测试按钮
   function renderTestButtons(vendor) {
@@ -811,6 +899,12 @@
         }
       }
 
+      // 图片场景：检查是否已加载图片
+      if (IMAGE_SCENARIOS.includes(scenario) && !currentImageData) {
+        await appAlert('请先选择一张图片或输入图片 URL');
+        throw new Error('ABORT_SILENT');
+      }
+
       if (scenario === 'openai_tools') {
         const tools = [
           {
@@ -845,8 +939,11 @@
           }
         ];
 
-        let messages = [{ role: 'user', content: userText }];
-        addMessage('user', '用户消息 #1', messages[0]);
+        let messages = [
+          { role: 'system', content: '你不仅能够调用 convert_base 工具，还必须在得到最终计算结果后调用 submit_answer 工具来提交最终答案。' },
+          { role: 'user', content: userText }
+        ];
+        addMessage('user', '用户消息 #1', messages[1]);
 
         let turn = 1;
         let hasSubmittedAnswer = false;
@@ -952,13 +1049,16 @@
         let validationStatus = null;
         let validationMsg = '';
 
+        const A_SYSTEM_INSTRUCTION = '你不仅能够调用 convert_base 工具，还必须在得到最终计算结果后调用 submit_answer 工具来提交最终答案。';
+
         const MAX_TURNS = 8;
         while (turn <= MAX_TURNS) {
           const aReq = {
             model,
             max_tokens: 1024,
             messages,
-            tools
+            tools,
+            system: A_SYSTEM_INSTRUCTION
           };
           addBlock(`请求 #${turn}`, aReq);
           const aTStart = Date.now();
@@ -1165,7 +1265,7 @@
 
         const MAX_TURNS = 8;
         while (turn <= MAX_TURNS) {
-          const rtReq = { model, tools, input: history };
+          const rtReq = { model, tools, input: history, instructions: '你不仅能够调用 convert_base 工具，还必须在得到最终计算结果后调用 submit_answer 工具来提交最终答案。' };
           addBlock(`请求 #${turn}`, rtReq);
 
           const rtTStart = Date.now();
@@ -1326,10 +1426,125 @@
           addInlineSuccess('模型成功进行了搜索工具调用，但回答中仍可能含有事实性错误');
         }
       }
+      else if (scenario === 'openai_image') {
+        // OpenAI Chat Completions 图片支持测试（单轮）
+        const contentParts = [
+          { type: 'text', text: userText },
+          { type: 'image_url', image_url: { url: currentImageData } }
+        ];
+        const oReq = { model, messages: [{ role: 'user', content: contentParts }] };
+        addBlock('请求 #1', oReq);
+        addMessage('user', '用户消息', contentParts);
+        const oTStart = Date.now();
+        const oR = await fetchAndParse(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(oReq),
+          signal
+        });
+        const oData = ensureJsonOrThrow(oR);
+        const oTDuration = Date.now() - oTStart;
+        addBlock('响应 #1', oData, oTDuration);
+        const choice = oData.choices && oData.choices[0];
+        if (choice && choice.message) {
+          addMessage('assistant', '回答', choice.message);
+          addInlineSuccess('图片已成功被模型识别并处理');
+        } else {
+          addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+        }
+      }
+      else if (scenario === 'anthropic_image') {
+        // Anthropic 图片支持测试（单轮）
+        let source;
+        if (currentImageData.startsWith('data:')) {
+          const matches = currentImageData.match(/^data:(image\/\w+);base64,(.+)$/);
+          if (!matches) {
+            await appAlert('无法解析图片数据，请重新选择');
+            throw new Error('ABORT_SILENT');
+          }
+          source = { type: 'base64', media_type: matches[1], data: matches[2] };
+        } else {
+          source = { type: 'url', url: currentImageData };
+        }
+        const aReq = {
+          model,
+          max_tokens: 1024,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: userText },
+              { type: 'image', source }
+            ]
+          }]
+        };
+        addBlock('请求 #1', aReq);
+        addMessage('user', '用户消息', aReq.messages[0].content);
+        const aTStart = Date.now();
+        const aR = await fetchAndParse(anthropicEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify(aReq),
+          signal
+        });
+        const aData = ensureJsonOrThrow(aR);
+        const aTDuration = Date.now() - aTStart;
+        addBlock('响应 #1', aData, aTDuration);
+        if (aData.content && aData.content.length > 0) {
+          addMessage('assistant', '回答', aData.content);
+          addInlineSuccess('图片已成功被模型识别并处理');
+        } else {
+          addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+        }
+      }
+      else if (scenario === 'gemini_image') {
+        // Google Gemini 图片支持测试（单轮）
+        let imagePart;
+        if (currentImageData.startsWith('data:')) {
+          const matches = currentImageData.match(/^data:(image\/\w+);base64,(.+)$/);
+          if (!matches) {
+            await appAlert('无法解析图片数据，请重新选择');
+            throw new Error('ABORT_SILENT');
+          }
+          imagePart = { inline_data: { mime_type: matches[1], data: matches[2] } };
+        } else {
+          imagePart = { fileData: { fileUri: currentImageData } };
+        }
+        const gReq = {
+          contents: [{
+            role: 'user',
+            parts: [
+              { text: userText },
+              imagePart
+            ]
+          }]
+        };
+        addBlock('请求 #1', gReq);
+        addMessage('user', '用户消息', gReq.contents[0]);
+        const gTStart = Date.now();
+        const gR = await fetchAndParse(geminiEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(gReq),
+          signal
+        });
+        const gData = ensureJsonOrThrow(gR);
+        const gTDuration = Date.now() - gTStart;
+        addBlock('响应 #1', gData, gTDuration);
+        const cand = gData.candidates && gData.candidates[0];
+        if (cand && cand.content) {
+          addMessage('assistant', '回答', cand.content);
+          addInlineSuccess('图片已成功被模型识别并处理');
+        } else {
+          addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+        }
+      }
 
     } catch (err) {
       if (err.name === 'AbortError') {
         console.log('Request aborted by user');
+        return;
+      }
+      if (err && err.message === 'ABORT_SILENT') {
         return;
       }
       console.error(err);
