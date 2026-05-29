@@ -2,10 +2,6 @@
 
 <p align="center">纯前端的多厂商 API 调用测试页面，用来测试 OpenAI/Anthropic/Google 等 API 的特殊调用方式（工具调用、搜索、URL 上下文等）。所有数据仅在浏览器本地处理与保存。</p>
 
-<div align="center">
-    <img src="example.png" alt="使用示例" />
-</div>
-
 ## 功能特性
 
 - **纯前端与本地存储：**
