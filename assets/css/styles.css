@@ -201,6 +201,10 @@ body {
     border-color: #1e90ff;
 }
 
+.url-input-group {
+    position: relative;
+}
+
 /* 密码输入框包装器 */
 .password-input-wrapper {
     position: relative;
@@ -1334,4 +1338,50 @@ body {
     background: #fff1f2;
     border-radius: 8px;
     margin: 4px;
+}
+
+/* 最近连接下拉 */
+.recent-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1.5px solid #cfe6ff;
+    border-radius: 10px;
+    background: #ffffff;
+    box-shadow: 0 8px 24px rgba(30, 144, 255, 0.15);
+    margin-top: 2px;
+}
+
+.recent-dropdown-item {
+    padding: 10px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 1px solid #f1f5f9;
+    transition: background 0.15s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.recent-dropdown-item:last-child {
+    border-bottom: none;
+}
+
+.recent-dropdown-item:hover {
+    background: #eff6ff;
+}
+
+.recent-dropdown-item .recent-url {
+    font-weight: 600;
+    color: #1f2937;
+    word-break: break-all;
+}
+
+.recent-dropdown-item .recent-meta {
+    font-size: 11px;
+    color: #94a3b8;
 }

@@ -39,6 +39,7 @@
   const previewImg = $('#previewImg');
   const imageInfo = $('#imageInfo');
   const removeImageBtn = $('#removeImageBtn');
+  const recentDropdown = $('#recentDropdown');
 
   // Image state
   let currentImageData = null; // base64 data URL or external URL string
@@ -66,6 +67,20 @@
     try { return JSON.parse(localStorage.getItem('apiConfigs') || '[]'); } catch { return []; }
   }
   function saveConfigs(cfgs) { localStorage.setItem('apiConfigs', JSON.stringify(cfgs)); }
+
+  // 最近连接缓存
+  function loadRecentConnections() {
+    try { return JSON.parse(localStorage.getItem('recentConnections') || '[]'); } catch { return []; }
+  }
+  function saveRecentConnections(conns) { localStorage.setItem('recentConnections', JSON.stringify(conns)); }
+  function saveRecentConnection(url, key, model) {
+    if (!url || !key) return;
+    const conns = loadRecentConnections();
+    const filtered = conns.filter(c => !(c.url === url && c.model === model));
+    filtered.unshift({ url, key, model, time: Date.now() });
+    if (filtered.length > 20) filtered.length = 20;
+    saveRecentConnections(filtered);
+  }
 
   // URL helpers
   function stripTrailingSlash(u) { return (u || '').replace(/\/+$/, ''); }
@@ -753,7 +768,15 @@
   // 显示图片预览
   function showImagePreview(src, info) {
     previewImg.src = src;
-    imageInfo.textContent = info;
+    // 截断过长文本（如 base64 数据），避免占用太多空间
+    if (info.length > 120) {
+      const prefix = info.substring(0, 80);
+      imageInfo.textContent = `${prefix}... (${info.length} 字符)`;
+      imageInfo.title = info; // 鼠标悬停可查看完整内容
+    } else {
+      imageInfo.textContent = info;
+      imageInfo.title = '';
+    }
     imagePreview.style.display = 'flex';
   }
 
@@ -945,6 +968,67 @@
     }
   });
 
+  // ---- 最近连接下拉 ----
+  function renderRecentDropdown(filterText) {
+    const conns = loadRecentConnections();
+    if (conns.length === 0) {
+      recentDropdown.style.display = 'none';
+      return;
+    }
+    const lower = (filterText || '').toLowerCase();
+    const filtered = lower
+      ? conns.filter(c => c.url.toLowerCase().includes(lower) || c.model.toLowerCase().includes(lower))
+      : conns;
+
+    if (filtered.length === 0) {
+      recentDropdown.style.display = 'none';
+      return;
+    }
+
+    recentDropdown.innerHTML = filtered.map((c, i) => {
+      const timeStr = c.time ? new Date(c.time).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+      return `<div class="recent-dropdown-item" data-index="${i}">
+        <span class="recent-url">${escapeHtml(c.url)}</span>
+        <span class="recent-meta">${escapeHtml(c.model)}${timeStr ? ' · ' + timeStr : ''}</span>
+      </div>`;
+    }).join('');
+    recentDropdown.style.display = '';
+
+    recentDropdown.querySelectorAll('.recent-dropdown-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const idx = parseInt(el.dataset.index, 10);
+        if (filtered[idx]) {
+          const entry = filtered[idx];
+          apiUrlEl.value = entry.url;
+          apiKeyEl.value = entry.key;
+          modelEl.value = entry.model;
+        }
+        closeRecentDropdown();
+      });
+    });
+  }
+
+  function closeRecentDropdown() {
+    recentDropdown.style.display = 'none';
+  }
+
+  // URL 输入框获得焦点时显示最近连接
+  apiUrlEl.addEventListener('focus', () => {
+    renderRecentDropdown(apiUrlEl.value);
+  });
+
+  // URL 输入时过滤
+  apiUrlEl.addEventListener('input', () => {
+    renderRecentDropdown(apiUrlEl.value);
+  });
+
+  // 点击外部关闭最近连接下拉
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.url-input-group')) {
+      closeRecentDropdown();
+    }
+  });
+
   // 渲染测试按钮
   function renderTestButtons(vendor) {
     const tests = vendorTests[vendor] || [];
@@ -1004,6 +1088,8 @@
     const apiKey = apiKeyEl.value.trim();
     const model = (modelEl.value || SYSTEM_DEFAULTS.model).trim();
     if (!apiUrl || !apiKey) { await appAlert('请填写 API URL 和 API Key'); return; }
+    // 自动缓存最近使用的连接
+    saveRecentConnection(apiUrl, apiKey, model);
     errorMessage.textContent = '';
     testBtn.disabled = true; testBtn.textContent = '请求中...';
     // 发起新请求前自动清空历史记录
