@@ -1232,3 +1232,106 @@ body {
         opacity: 1;
     }
 }
+
+/* 模型选择器 - 输入框 + 获取按钮 */
+.model-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.model-input-wrapper input {
+    flex: 1;
+    min-width: 0;
+}
+
+.model-fetch-btn {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid #cfe6ff;
+    border-radius: 10px;
+    background: #f8fbff;
+    color: #1e90ff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.model-fetch-btn:hover {
+    background: #eff6ff;
+    border-color: #1e90ff;
+}
+
+.model-fetch-btn:active {
+    transform: scale(0.95);
+}
+
+.model-fetch-btn.loading svg {
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* 模型下拉列表 */
+.model-dropdown {
+    position: relative;
+    z-index: 50;
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1.5px solid #cfe6ff;
+    border-radius: 10px;
+    background: #ffffff;
+    box-shadow: 0 8px 24px rgba(30, 144, 255, 0.15);
+    margin-top: 4px;
+}
+
+.model-dropdown-item {
+    padding: 10px 14px;
+    font-size: 14px;
+    color: #1f2937;
+    cursor: pointer;
+    border-bottom: 1px solid #f1f5f9;
+    transition: background 0.15s ease;
+}
+
+.model-dropdown-item:last-child {
+    border-bottom: none;
+}
+
+.model-dropdown-item:hover {
+    background: #eff6ff;
+    color: #1e90ff;
+}
+
+.model-dropdown-item .model-id {
+    font-weight: 600;
+}
+
+.model-dropdown-item .model-meta {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-left: 8px;
+}
+
+.model-dropdown-empty {
+    padding: 20px;
+    text-align: center;
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+.model-dropdown-error {
+    padding: 12px 14px;
+    color: #b91c1c;
+    font-size: 13px;
+    background: #fff1f2;
+    border-radius: 8px;
+    margin: 4px;
+}

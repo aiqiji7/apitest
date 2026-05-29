@@ -17,6 +17,8 @@
   const userInputEl = $('#userInput');
   const manageConfigBtn = $('#manageConfigBtn');
   const configModal = $('#configModal');
+  const fetchModelsBtn = $('#fetchModelsBtn');
+  const modelDropdown = $('#modelDropdown');
   const closeConfigModalBtn = $('#closeConfigModal');
   const configListEl = $('#configList');
   const saveConfigBtn = $('#saveConfigBtn');
@@ -693,8 +695,8 @@
 
   // 图片场景列表
   const IMAGE_SCENARIOS = ['openai_image', 'anthropic_image', 'gemini_image'];
-  // 默认测试图片（A图片，可替换为自己的图片）
-  const DEFAULT_TEST_IMAGE = 'https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg';
+  // 默认测试图片（base64 内嵌，无需网络加载）
+  const DEFAULT_TEST_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAA+UlEQVR4nO3RQQ0AIAzAwGlCHRKRhYw9ekkFNLk592mxWT+IBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtAABoBwBAOwAA2gEA0A4AgHYAALQDAKAdAADtPgfLhWXjrwI0AAAAAElFTkSuQmCC';
 
   // 切换测试场景工具函数
   function applyScenarioInput(scenario, defaultInput) {
@@ -812,6 +814,136 @@
 
   // 移除图片
   removeImageBtn.addEventListener('click', clearImageInput);
+
+  // ---- 从 API 获取模型列表 ----
+  let cachedModels = []; // 缓存已获取的模型列表
+  let fetchAbortController = null;
+
+  async function fetchModelsFromEndpoint() {
+    const apiUrl = apiUrlEl.value.trim();
+    const apiKey = apiKeyEl.value.trim();
+    if (!apiUrl || !apiKey) {
+      renderModelDropdownError('请先填写 API URL 和 API Key');
+      return;
+    }
+
+    // 中止上一次请求
+    if (fetchAbortController) fetchAbortController.abort();
+    fetchAbortController = new AbortController();
+    const signal = fetchAbortController.signal;
+
+    fetchModelsBtn.classList.add('loading');
+    modelDropdown.style.display = '';
+    modelDropdown.innerHTML = '<div class="model-dropdown-empty">加载中...</div>';
+
+    try {
+      const normalizedUrl = stripTrailingSlash(apiUrl);
+      const modelUrl = `${normalizedUrl}/v1/models`;
+      const res = await fetch(modelUrl, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+        signal
+      });
+      if (signal.aborted) return;
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}${text ? ': ' + text.slice(0, 120) : ''}`);
+      }
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('json')) {
+        throw new Error('响应非 JSON，该 API 不支持模型列表查询');
+      }
+
+      const data = await res.json();
+      if (signal.aborted) return;
+
+      const models = Array.isArray(data.data) ? data.data : [];
+      if (models.length === 0) {
+        renderModelDropdownEmpty('未获取到可用模型');
+        return;
+      }
+
+      cachedModels = models;
+      renderModelDropdown(models);
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      renderModelDropdownError(err.message || '获取模型列表失败');
+    } finally {
+      fetchModelsBtn.classList.remove('loading');
+    }
+  }
+
+  function renderModelDropdown(models) {
+    // 去重（按 id），按 name/id 排序
+    const seen = new Set();
+    const unique = models.filter(m => {
+      const id = m.id || m.name || '';
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    unique.sort((a, b) => ((a.id || a.name) || '').localeCompare((b.id || b.name) || ''));
+
+    modelDropdown.innerHTML = unique.map(m => {
+      const id = m.id || m.name || 'unknown';
+      const owned = m.owned_by ? `<span class="model-meta">${m.owned_by}</span>` : '';
+      return `<div class="model-dropdown-item" data-model="${id.replace(/"/g, '&quot;')}">
+        <span class="model-id">${id}</span>${owned}
+      </div>`;
+    }).join('');
+    modelDropdown.style.display = '';
+
+    // 点击选项填充到输入框并关闭下拉
+    modelDropdown.querySelectorAll('.model-dropdown-item').forEach(el => {
+      el.addEventListener('click', () => {
+        modelEl.value = el.dataset.model;
+        closeModelDropdown();
+      });
+    });
+  }
+
+  function renderModelDropdownError(msg) {
+    modelDropdown.innerHTML = `<div class="model-dropdown-error">${escapeHtml(msg)}</div>`;
+    modelDropdown.style.display = '';
+  }
+
+  function renderModelDropdownEmpty(msg) {
+    modelDropdown.innerHTML = `<div class="model-dropdown-empty">${escapeHtml(msg || '暂无可用模型')}</div>`;
+    modelDropdown.style.display = '';
+  }
+
+  function closeModelDropdown() {
+    modelDropdown.style.display = 'none';
+  }
+
+  // 获取模型列表按钮点击
+  fetchModelsBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // 如果下拉已显示且有缓存，直接显示缓存；否则重新拉取
+    if (modelDropdown.style.display !== 'none' && cachedModels.length > 0) {
+      closeModelDropdown();
+    } else if (cachedModels.length > 0) {
+      renderModelDropdown(cachedModels);
+    } else {
+      fetchModelsFromEndpoint();
+    }
+  });
+
+  // 点击外部关闭下拉
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.model-input-group')) {
+      closeModelDropdown();
+    }
+  });
+
+  // 模型输入框获得焦点时，如果有缓存则自动显示下拉
+  modelEl.addEventListener('focus', () => {
+    if (cachedModels.length > 0) {
+      renderModelDropdown(cachedModels);
+    }
+  });
 
   // 渲染测试按钮
   function renderTestButtons(vendor) {
