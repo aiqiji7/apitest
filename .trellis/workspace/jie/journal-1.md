@@ -39,3 +39,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: API URL 最近连接按钮
+
+**Date**: 2026-06-18
+**Task**: API URL 最近连接按钮
+**Branch**: `main`
+
+### Summary
+
+给 API URL 输入框增加手动展开最近连接列表的按钮，修正按钮不再依赖模型缓存，并归档任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `92e76b0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
