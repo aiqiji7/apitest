@@ -839,8 +839,25 @@
   removeImageBtn.addEventListener('click', clearImageInput);
 
   // ---- 从 API 获取模型列表 ----
-  let cachedModels = []; // 缓存已获取的模型列表
+  let cachedModels = { key: '', models: [] }; // 缓存当前连接已获取的模型列表
   let fetchAbortController = null;
+
+  function getModelCacheKey(apiUrl, apiKey) {
+    const normalizedUrl = normalizeApiUrl(apiUrl);
+    const normalizedKey = (apiKey || '').trim();
+    if (!normalizedUrl || !normalizedKey) return '';
+    return JSON.stringify([normalizedUrl, normalizedKey]);
+  }
+
+  function getCurrentCachedModels() {
+    const cacheKey = getModelCacheKey(apiUrlEl.value, apiKeyEl.value);
+    if (!cacheKey || cachedModels.key !== cacheKey) return [];
+    return cachedModels.models;
+  }
+
+  function isCurrentModelCacheKey(cacheKey) {
+    return !!cacheKey && getModelCacheKey(apiUrlEl.value, apiKeyEl.value) === cacheKey;
+  }
 
   async function fetchModelsFromEndpoint() {
     const apiUrl = apiUrlEl.value.trim();
@@ -849,6 +866,7 @@
       renderModelDropdownError('请先填写 API URL 和 API Key');
       return;
     }
+    const cacheKey = getModelCacheKey(apiUrl, apiKey);
 
     // 中止上一次请求
     if (fetchAbortController) fetchAbortController.abort();
@@ -884,17 +902,23 @@
 
       const models = Array.isArray(data.data) ? data.data : [];
       if (models.length === 0) {
+        if (!isCurrentModelCacheKey(cacheKey)) return;
         renderModelDropdownEmpty('未获取到可用模型');
         return;
       }
 
-      cachedModels = models;
+      cachedModels = { key: cacheKey, models };
+      if (!isCurrentModelCacheKey(cacheKey)) return;
       renderModelDropdown(models);
     } catch (err) {
       if (err.name === 'AbortError') return;
+      if (!isCurrentModelCacheKey(cacheKey)) return;
       renderModelDropdownError(err.message || '获取模型列表失败');
     } finally {
-      fetchModelsBtn.classList.remove('loading');
+      if (fetchAbortController && fetchAbortController.signal === signal) {
+        fetchAbortController = null;
+        fetchModelsBtn.classList.remove('loading');
+      }
     }
   }
 
@@ -944,11 +968,12 @@
   // 获取模型列表按钮点击
   fetchModelsBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    const currentCachedModels = getCurrentCachedModels();
     // 如果下拉已显示且有缓存，直接显示缓存；否则重新拉取
-    if (modelDropdown.style.display !== 'none' && cachedModels.length > 0) {
+    if (modelDropdown.style.display !== 'none' && currentCachedModels.length > 0) {
       closeModelDropdown();
-    } else if (cachedModels.length > 0) {
-      renderModelDropdown(cachedModels);
+    } else if (currentCachedModels.length > 0) {
+      renderModelDropdown(currentCachedModels);
     } else {
       fetchModelsFromEndpoint();
     }
@@ -963,8 +988,9 @@
 
   // 模型输入框获得焦点时，如果有缓存则自动显示下拉
   modelEl.addEventListener('focus', () => {
-    if (cachedModels.length > 0) {
-      renderModelDropdown(cachedModels);
+    const currentCachedModels = getCurrentCachedModels();
+    if (currentCachedModels.length > 0) {
+      renderModelDropdown(currentCachedModels);
     }
   });
 
