@@ -933,14 +933,25 @@
     });
     unique.sort((a, b) => ((a.id || a.name) || '').localeCompare((b.id || b.name) || ''));
 
-    modelDropdown.innerHTML = unique.map(m => {
+    const refreshRow = `<div class="model-dropdown-refresh"><span class="refresh-icon">↻</span>刷新列表</div>`;
+    const itemsHtml = unique.map(m => {
       const id = m.id || m.name || 'unknown';
       const owned = m.owned_by ? `<span class="model-meta">${m.owned_by}</span>` : '';
       return `<div class="model-dropdown-item" data-model="${id.replace(/"/g, '&quot;')}">
         <span class="model-id">${id}</span>${owned}
       </div>`;
     }).join('');
+    modelDropdown.innerHTML = refreshRow + itemsHtml;
     modelDropdown.style.display = '';
+
+    // 点击刷新行：强制重新拉取，不填充输入框
+    const refreshEl = modelDropdown.querySelector('.model-dropdown-refresh');
+    if (refreshEl) {
+      refreshEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fetchModelsFromEndpoint();
+      });
+    }
 
     // 点击选项填充到输入框并关闭下拉
     modelDropdown.querySelectorAll('.model-dropdown-item').forEach(el => {

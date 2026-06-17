@@ -61,7 +61,39 @@ The preferred minimal approach is a single cache entry because the existing UI h
 * Changing the API endpoint format or auth scheme.
 * Refactoring the broader request/test flow.
 
+## Follow-up: Manual Refresh Row (Increment)
+
+### Goal
+
+After the cache fix, for the same API URL + Key, clicking the fetch button only toggles the cached dropdown and never re-fetches. Add an explicit way for the user to force a fresh `/v1/models` request without changing the connection.
+
+### Decision
+
+Approach 2 + trigger 1: keep the cache toggle on the existing button, and add a **"刷新列表" (refresh) row at the top of the model dropdown**. Clicking that row forces a fresh fetch from the current endpoint and replaces the cached list.
+
+### Requirements
+
+* Render a refresh row as the first item inside the model dropdown whenever the dropdown shows a model list (`renderModelDropdown`).
+* Clicking the refresh row:
+  * Does NOT fill the model input (unlike model items).
+  * Triggers `fetchModelsFromEndpoint()` to re-request `/v1/models` for the current URL/Key.
+  * Updates the cache for the current connection and re-renders the dropdown.
+* The refresh row must be visually distinguishable from model items but consistent with existing dropdown styling.
+* The existing button behavior is unchanged: first click fetches, later clicks toggle cache open/close.
+* Clicking the refresh row must not close the dropdown via the existing outside-click / item-click logic before the refresh completes.
+* Preserve all existing error/loading/abort handling.
+
+### Acceptance Criteria
+
+* [ ] When the dropdown shows models, a "刷新列表" row appears at the top.
+* [ ] Clicking it issues a new `/v1/models` request even when a valid cache exists for the current connection.
+* [ ] Clicking it does not change the model input value.
+* [ ] After refresh, the dropdown reflects the newly fetched list.
+* [ ] Changing URL/Key still invalidates cache as before.
+* [ ] `node --check assets/js/script.js` passes.
+
 ## Technical Notes
 
 * Inspected `assets/js/script.js:841-969`.
+* Dropdown styles: `assets/css/styles.css:1287-1340` (`.model-dropdown*`).
 * Relevant project spec: `.trellis/spec/frontend/index.md`.
