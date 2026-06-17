@@ -1363,6 +1363,16 @@ body {
     margin: 4px;
 }
 
+.model-dropdown-error-title {
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.model-dropdown-error-line {
+    line-height: 1.45;
+    word-break: break-word;
+}
+
 /* 最近连接下拉 */
 .recent-dropdown {
     position: absolute;

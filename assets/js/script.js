@@ -839,8 +839,128 @@
   removeImageBtn.addEventListener('click', clearImageInput);
 
   // ---- 从 API 获取模型列表 ----
+  const MODEL_ERROR_BODY_LIMIT = 600;
   let cachedModels = { key: '', models: [] }; // 缓存当前连接已获取的模型列表
   let fetchAbortController = null;
+
+  function truncateText(text, maxLength) {
+    const value = String(text || '');
+    return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+  }
+
+  function sanitizeSensitiveText(text) {
+    return String(text || '')
+      .replace(/(sk-)[A-Za-z0-9_-]{8,}/g, '$1***')
+      .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, '$1***')
+      .replace(/(["']?(?:api[_-]?key|token|access_token|authorization|secret|password|cookie)["']?\s*[:=]\s*["']?)[^"',\s;&}\]]{4,}/gi, '$1***')
+      .replace(/\b(api[_-]?key|token|access_token|authorization|secret|password|cookie)\b\s+["']?[A-Za-z0-9._~+/=-]{8,}["']?/gi, '$1 ***')
+      .trim();
+  }
+
+  function sanitizeUrlForDisplay(url) {
+    let safeUrl = String(url || '');
+    safeUrl = safeUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/)([^/@\s:]+(?::[^/@\s]*)?@)/i, '$1***@');
+    safeUrl = safeUrl.replace(/([?&#;](?:api[_-]?key|key|token|access_token|authorization|secret|password|cookie)=)[^&#;\s]+/gi, '$1***');
+    return sanitizeSensitiveText(safeUrl);
+  }
+
+  function parseJsonSafely(text) {
+    const value = String(text || '').trim();
+    if (!value) return null;
+    try { return JSON.parse(value); } catch { return null; }
+  }
+
+  function valueToText(value) {
+    if (value == null) return '';
+    if (typeof value === 'string') return value;
+    try { return JSON.stringify(value); } catch { return String(value); }
+  }
+
+  function extractJsonErrorSummary(obj, depth) {
+    if (!obj || typeof obj !== 'object' || depth > 2) return '';
+
+    const error = obj.error || obj.err;
+    const candidates = [];
+
+    if (error && typeof error === 'object') {
+      ['message', 'detail', 'details', 'code', 'type'].forEach(key => {
+        if (error[key] != null) candidates.push(valueToText(error[key]));
+      });
+    } else if (typeof error === 'string') {
+      candidates.push(error);
+    }
+
+    ['message', 'detail', 'details'].forEach(key => {
+      if (obj[key] != null && obj[key] !== error) candidates.push(valueToText(obj[key]));
+    });
+
+    const summary = candidates.filter(Boolean).map(item => sanitizeSensitiveText(item)).join('；');
+    return summary ? truncateText(summary, MODEL_ERROR_BODY_LIMIT) : '';
+  }
+
+  function getBackendResponseSummary(responseBody) {
+    const text = String(responseBody || '').trim();
+    if (!text) return '（空响应）';
+
+    const parsed = parseJsonSafely(text);
+    if (parsed !== null) {
+      const summary = extractJsonErrorSummary(parsed, 0);
+      if (summary) return summary;
+      return truncateText(sanitizeSensitiveText(JSON.stringify(parsed)), MODEL_ERROR_BODY_LIMIT);
+    }
+
+    return truncateText(sanitizeSensitiveText(text), MODEL_ERROR_BODY_LIMIT);
+  }
+
+  function formatHttpModelError(info) {
+    const statusText = info.statusText ? ` ${info.statusText}` : '';
+    return {
+      title: `请求失败：HTTP ${info.status}${statusText}`,
+      details: [
+        `状态：HTTP ${info.status}${statusText}`,
+        `请求：${info.method || 'GET'} ${sanitizeUrlForDisplay(info.url || '')}`,
+        `后端返回：${getBackendResponseSummary(info.responseBody)}`
+      ]
+    };
+  }
+
+  function formatNetworkModelError(url, method) {
+    return {
+      title: '无法连接 API',
+      details: [
+        `请求：${method || 'GET'} ${sanitizeUrlForDisplay(url || '')}`,
+        '浏览器未返回后端响应，无法判断具体原因。',
+        '可能原因：后端不可用、URL/端口错误、跨域(CORS) 或代理问题。'
+      ]
+    };
+  }
+
+  function getFetchMethod(options) {
+    return String((options && options.method) || 'GET').toUpperCase();
+  }
+
+  function createNetworkFetchError(url, options) {
+    const err = new TypeError('无法连接 API');
+    err.name = 'FetchNetworkError';
+    err.url = url;
+    err.method = getFetchMethod(options);
+    return err;
+  }
+
+  function formatGenericModelError(err, url, method) {
+    const message = sanitizeSensitiveText(String(err && (err.message || err) || '获取模型列表失败'));
+    return {
+      title: '获取模型列表失败',
+      details: [
+        `请求：${method || 'GET'} ${sanitizeUrlForDisplay(url || '')}`,
+        message
+      ]
+    };
+  }
+
+  async function readResponseText(res) {
+    return await res.text().catch(() => '');
+  }
 
   function getModelCacheKey(apiUrl, apiKey) {
     const normalizedUrl = normalizeApiUrl(apiUrl);
@@ -873,31 +993,61 @@
     fetchAbortController = new AbortController();
     const signal = fetchAbortController.signal;
 
+    const method = 'GET';
+    const normalizedUrl = stripTrailingSlash(apiUrl);
+    const modelUrl = `${normalizedUrl}/v1/models`;
+
     fetchModelsBtn.classList.add('loading');
     modelDropdown.style.display = '';
     modelDropdown.innerHTML = '<div class="model-dropdown-empty">加载中...</div>';
 
     try {
-      const normalizedUrl = stripTrailingSlash(apiUrl);
-      const modelUrl = `${normalizedUrl}/v1/models`;
       const res = await fetch(modelUrl, {
-        method: 'GET',
+        method,
         headers: { 'Authorization': `Bearer ${apiKey}` },
         signal
       });
       if (signal.aborted) return;
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`HTTP ${res.status}${text ? ': ' + text.slice(0, 120) : ''}`);
-      }
-
       const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('json')) {
-        throw new Error('响应非 JSON，该 API 不支持模型列表查询');
+      if (!res.ok) {
+        const responseBody = await readResponseText(res);
+        const err = new Error(`HTTP ${res.status}${res.statusText ? ' ' + res.statusText : ''}`);
+        err.status = res.status;
+        err.statusText = res.statusText;
+        err.url = modelUrl;
+        err.method = method;
+        err.responseBody = responseBody;
+        err.contentType = contentType;
+        throw err;
       }
 
-      const data = await res.json();
+      if (!contentType.includes('json')) {
+        const responseBody = await readResponseText(res);
+        const err = new Error('响应非 JSON，该 API 不支持模型列表查询');
+        err.status = res.status;
+        err.statusText = res.statusText;
+        err.url = modelUrl;
+        err.method = method;
+        err.responseBody = responseBody;
+        err.contentType = contentType;
+        throw err;
+      }
+
+      const responseBody = await readResponseText(res);
+      let data;
+      try {
+        data = JSON.parse(responseBody);
+      } catch (parseErr) {
+        const err = new Error('响应非 JSON，该 API 不支持模型列表查询');
+        err.status = res.status;
+        err.statusText = res.statusText;
+        err.url = modelUrl;
+        err.method = method;
+        err.responseBody = responseBody;
+        err.contentType = contentType;
+        throw err;
+      }
       if (signal.aborted) return;
 
       const models = Array.isArray(data.data) ? data.data : [];
@@ -911,9 +1061,29 @@
       if (!isCurrentModelCacheKey(cacheKey)) return;
       renderModelDropdown(models);
     } catch (err) {
-      if (err.name === 'AbortError') return;
+      if ((err && err.name) === 'AbortError' || signal.aborted) return;
       if (!isCurrentModelCacheKey(cacheKey)) return;
-      renderModelDropdownError(err.message || '获取模型列表失败');
+
+      if (err && err.response) {
+        const responseBody = await readResponseText(err.response);
+        renderModelDropdownError(formatHttpModelError({
+          status: err.response.status,
+          statusText: err.response.statusText,
+          url: modelUrl,
+          method,
+          responseBody,
+          contentType: err.response.headers ? (err.response.headers.get('content-type') || '') : ''
+        }));
+        return;
+      }
+
+      if (err && err.status) {
+        renderModelDropdownError(formatHttpModelError(err));
+      } else if (err && err.name === 'TypeError') {
+        renderModelDropdownError(formatNetworkModelError(modelUrl, method));
+      } else {
+        renderModelDropdownError(formatGenericModelError(err, modelUrl, method));
+      }
     } finally {
       if (fetchAbortController && fetchAbortController.signal === signal) {
         fetchAbortController = null;
@@ -962,9 +1132,27 @@
     });
   }
 
-  function renderModelDropdownError(msg) {
-    modelDropdown.innerHTML = `<div class="model-dropdown-error">${escapeHtml(msg)}</div>`;
+  function renderModelDropdownError(error) {
+    const content = typeof error === 'string' ? { title: error } : error;
+    modelDropdown.innerHTML = '';
     modelDropdown.style.display = '';
+
+    const box = document.createElement('div');
+    box.className = 'model-dropdown-error';
+
+    const title = document.createElement('div');
+    title.className = 'model-dropdown-error-title';
+    title.textContent = content.title || '获取模型列表失败';
+    box.appendChild(title);
+
+    (content.details || []).forEach(text => {
+      const line = document.createElement('div');
+      line.className = 'model-dropdown-error-line';
+      line.textContent = text;
+      box.appendChild(line);
+    });
+
+    modelDropdown.appendChild(box);
   }
 
   function renderModelDropdownEmpty(msg) {
@@ -1805,7 +1993,12 @@
       console.error(err);
       // 清空顶部简要错误，改为在时间线内展示红色错误块
       errorMessage.textContent = '';
-      addInlineError(`错误：${err && (err.message || err)}`, { rawText: err && err.rawText, contentType: err && err.contentType });
+      if (err && err.name === 'FetchNetworkError') {
+        const info = formatNetworkModelError(err.url, err.method);
+        addInlineError(info.title, { rawText: info.details.join('\n'), contentType: 'text/plain' });
+        return;
+      }
+      addInlineError(`错误：${err && (err.message || err)}`, { rawText: sanitizeSensitiveText(err && err.rawText), contentType: err && err.contentType });
     } finally {
       requestPending = false;
       hideWaiting();
@@ -1816,9 +2009,18 @@
 
   // ---- network helpers ----
   async function fetchAndParse(url, options) {
-    const res = await fetch(url, options);
+    let res;
+    try {
+      res = await fetch(url, options);
+    } catch (err) {
+      if (err && err.name === 'AbortError') throw err;
+      throw createNetworkFetchError(url, options);
+    }
+
     const contentType = res.headers.get('content-type') || '';
-    const text = await res.text();
+    const text = await res.text().catch(() => {
+      throw createNetworkFetchError(url, options);
+    });
     let json; try { json = JSON.parse(text); } catch { }
     if (!res.ok) { const e = new Error(`HTTP ${res.status}`); e.status = res.status; e.rawText = text; e.contentType = contentType; throw e; }
     return { json, text, contentType };
