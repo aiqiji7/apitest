@@ -32,8 +32,17 @@
         <div class="grid-3 input-row">
           <div class="input-group url-input-group">
             <label for="apiUrl">API URL</label>
-            <input type="text" id="apiUrl" placeholder="例如：https://api.openai.com" />
-            <div id="recentDropdown" class="recent-dropdown" style="display:none;"></div>
+            <div class="url-input-wrapper">
+              <input type="text" id="apiUrl" placeholder="例如：https://api.openai.com" />
+              <button type="button" id="showRecentConnectionsBtn" class="model-fetch-btn recent-connections-btn" title="暂无最近连接" aria-label="展开最近连接列表" aria-controls="recentDropdown" aria-haspopup="listbox" aria-expanded="false" disabled>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 7h16"/>
+                  <path d="M4 12h16"/>
+                  <path d="M4 17h10"/>
+                </svg>
+              </button>
+            </div>
+            <div id="recentDropdown" class="recent-dropdown" role="listbox" style="display:none;"></div>
           </div>
           <div class="input-group">
             <label for="apiKey">API Key</label>

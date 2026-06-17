@@ -19,6 +19,7 @@
   const configModal = $('#configModal');
   const fetchModelsBtn = $('#fetchModelsBtn');
   const modelDropdown = $('#modelDropdown');
+  const showRecentConnectionsBtn = $('#showRecentConnectionsBtn');
   const closeConfigModalBtn = $('#closeConfigModal');
   const configListEl = $('#configList');
   const saveConfigBtn = $('#saveConfigBtn');
@@ -80,6 +81,21 @@
     filtered.unshift({ url, key, model, time: Date.now() });
     if (filtered.length > 20) filtered.length = 20;
     saveRecentConnections(filtered);
+    updateRecentConnectionsButtonState();
+  }
+
+  function updateRecentConnectionsButtonState() {
+    if (!showRecentConnectionsBtn || !recentDropdown) return;
+    const recentConnections = loadRecentConnections();
+    const hasRecentConnections = recentConnections.length > 0;
+    const isOpen = recentDropdown.style.display !== 'none';
+    showRecentConnectionsBtn.disabled = !hasRecentConnections;
+    showRecentConnectionsBtn.title = hasRecentConnections ? `展开最近连接列表（${recentConnections.length} 条）` : '暂无最近连接';
+    showRecentConnectionsBtn.setAttribute('aria-disabled', String(!hasRecentConnections));
+    showRecentConnectionsBtn.setAttribute('aria-expanded', String(hasRecentConnections && isOpen));
+    if (!hasRecentConnections) {
+      closeRecentDropdown();
+    }
   }
 
   // URL helpers
@@ -379,11 +395,13 @@
     apiUrlEl.value = cfg.url || SYSTEM_DEFAULTS.apiUrl;
     apiKeyEl.value = cfg.key || SYSTEM_DEFAULTS.apiKey;
     modelEl.value = cfg.model || SYSTEM_DEFAULTS.model;
+    updateRecentConnectionsButtonState();
   }
   function applySystemDefaultToTop() {
     apiUrlEl.value = SYSTEM_DEFAULTS.apiUrl;
     apiKeyEl.value = SYSTEM_DEFAULTS.apiKey;
     modelEl.value = SYSTEM_DEFAULTS.model;
+    updateRecentConnectionsButtonState();
   }
 
   // UI builders
@@ -542,6 +560,7 @@
       apiUrlEl.value = cfg.url || '';
       apiKeyEl.value = cfg.key || '';
       modelEl.value = cfg.model || SYSTEM_DEFAULTS.model;
+      updateRecentConnectionsButtonState();
       configModal.classList.remove('open');
     }
   });
@@ -643,6 +662,7 @@
   // URL 输入框失焦时自动规范化
   apiUrlEl.addEventListener('blur', () => {
     apiUrlEl.value = normalizeApiUrl(apiUrlEl.value);
+    updateRecentConnectionsButtonState();
   });
   configUrlEl.addEventListener('blur', () => {
     configUrlEl.value = normalizeApiUrl(configUrlEl.value);
@@ -666,6 +686,7 @@
     // 占位留空：不再动态写入 placeholder
     // 初始化厂商分组和测试按钮
     renderTestButtons('openai');
+    updateRecentConnectionsButtonState();
     updateClearBtnState();
   });
 
@@ -972,7 +993,7 @@
   function getCurrentCachedModels() {
     const cacheKey = getModelCacheKey(apiUrlEl.value, apiKeyEl.value);
     if (!cacheKey || cachedModels.key !== cacheKey) return [];
-    return cachedModels.models;
+    return Array.isArray(cachedModels.models) ? cachedModels.models : [];
   }
 
   function isCurrentModelCacheKey(cacheKey) {
@@ -1053,12 +1074,13 @@
       const models = Array.isArray(data.data) ? data.data : [];
       if (models.length === 0) {
         if (!isCurrentModelCacheKey(cacheKey)) return;
+        cachedModels = { key: cacheKey, models: [] };
         renderModelDropdownEmpty('未获取到可用模型');
         return;
       }
 
-      cachedModels = { key: cacheKey, models };
       if (!isCurrentModelCacheKey(cacheKey)) return;
+      cachedModels = { key: cacheKey, models };
       renderModelDropdown(models);
     } catch (err) {
       if ((err && err.name) === 'AbortError' || signal.aborted) return;
@@ -1164,6 +1186,24 @@
     modelDropdown.style.display = 'none';
   }
 
+  function toggleRecentConnectionsDropdown() {
+    if (!showRecentConnectionsBtn || !recentDropdown) return;
+    const recentConnections = loadRecentConnections();
+    if (recentConnections.length === 0) {
+      closeRecentDropdown();
+      updateRecentConnectionsButtonState();
+      return;
+    }
+
+    if (recentDropdown.style.display !== 'none' && recentDropdown.dataset.filterText === '') {
+      closeRecentDropdown();
+      return;
+    }
+
+    closeModelDropdown();
+    renderRecentDropdown('');
+  }
+
   // 获取模型列表按钮点击
   fetchModelsBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1177,6 +1217,13 @@
       fetchModelsFromEndpoint();
     }
   });
+
+  if (showRecentConnectionsBtn) {
+    showRecentConnectionsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleRecentConnectionsDropdown();
+    });
+  }
 
   // 点击外部关闭下拉
   document.addEventListener('click', (e) => {
@@ -1197,7 +1244,8 @@
   function renderRecentDropdown(filterText) {
     const conns = loadRecentConnections();
     if (conns.length === 0) {
-      recentDropdown.style.display = 'none';
+      closeRecentDropdown();
+      updateRecentConnectionsButtonState();
       return;
     }
     const lower = (filterText || '').toLowerCase();
@@ -1206,10 +1254,12 @@
       : conns;
 
     if (filtered.length === 0) {
-      recentDropdown.style.display = 'none';
+      closeRecentDropdown();
+      updateRecentConnectionsButtonState();
       return;
     }
 
+    recentDropdown.dataset.filterText = filterText || '';
     recentDropdown.innerHTML = filtered.map((c, i) => {
       const timeStr = c.time ? new Date(c.time).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
       return `<div class="recent-dropdown-item" data-index="${i}">
@@ -1218,6 +1268,7 @@
       </div>`;
     }).join('');
     recentDropdown.style.display = '';
+    updateRecentConnectionsButtonState();
 
     recentDropdown.querySelectorAll('.recent-dropdown-item').forEach(el => {
       el.addEventListener('click', () => {
@@ -1235,6 +1286,10 @@
 
   function closeRecentDropdown() {
     recentDropdown.style.display = 'none';
+    recentDropdown.dataset.filterText = '';
+    if (showRecentConnectionsBtn) {
+      showRecentConnectionsBtn.setAttribute('aria-expanded', 'false');
+    }
   }
 
   // URL 输入框获得焦点时显示最近连接
@@ -1245,6 +1300,7 @@
   // URL 输入时过滤
   apiUrlEl.addEventListener('input', () => {
     renderRecentDropdown(apiUrlEl.value);
+    updateRecentConnectionsButtonState();
   });
 
   // 点击外部关闭最近连接下拉

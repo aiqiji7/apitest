@@ -205,6 +205,17 @@ body {
     position: relative;
 }
 
+.url-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.url-input-wrapper input {
+    flex: 1;
+    min-width: 0;
+}
+
 /* 密码输入框包装器 */
 .password-input-wrapper {
     position: relative;
@@ -1270,12 +1281,33 @@ body {
     border-color: #1e90ff;
 }
 
+.model-fetch-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    color: #94a3b8;
+    background: #f8fafc;
+    border-color: #dbeafe;
+}
+
+.model-fetch-btn:disabled:hover {
+    background: #f8fafc;
+    border-color: #dbeafe;
+}
+
 .model-fetch-btn:active {
     transform: scale(0.95);
 }
 
+.model-fetch-btn:disabled:active {
+    transform: none;
+}
+
 .model-fetch-btn.loading svg {
     animation: spin 0.8s linear infinite;
+}
+
+.recent-connections-btn {
+    flex-shrink: 0;
 }
 
 @keyframes spin {
@@ -1283,7 +1315,6 @@ body {
     to { transform: rotate(360deg); }
 }
 
-/* 模型下拉列表 */
 .model-dropdown {
     position: relative;
     z-index: 50;
