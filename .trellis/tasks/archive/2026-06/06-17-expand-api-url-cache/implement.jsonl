@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend spec index for UI change context"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "UI component and accessibility conventions for the URL cache button/dropdown"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "API-derived cache identity rules for rendering only matching cached models"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality rules for safe DOM rendering"}
