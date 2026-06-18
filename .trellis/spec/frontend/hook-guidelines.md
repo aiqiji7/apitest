@@ -94,23 +94,73 @@ All API requests MUST explicitly request streaming. The `stream` property in req
 - **Gotcha**: Tool-calling scenarios must also respect the stream toggle — use `isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint` to select the correct endpoint.
 - SSE response: `data:` lines with `candidates[0].content.parts[0].text`.
 
-**`fetchAndStream(url, options, onChunk)` helper**:
+**`fetchAndStream(url, options, onChunk, onPhase)` helper**:
 ```js
-async function fetchAndStream(url, options, onChunk) {
+async function fetchAndStream(url, options, onChunk, onPhase) {
   const res = await fetch(url, options);
+  // Phase 2: HTTP response headers received
+  if (onPhase) onPhase('waiting_response');
   const contentType = res.headers.get('content-type') || '';
   const isSse = contentType.includes('text/event-stream');
   if (!isSse || !res.body) {
-    // Non-streaming fallback
+    // Non-streaming fallback (skip phases 2,3 → go to phase 4)
     const text = await res.text();
+    if (onPhase) onPhase('processing');
     const json = JSON.parse(text);
     return { json, text, contentType, isStreamed: false };
   }
-  // SSE parsing: handles OpenAI, Anthropic, Gemini chunk formats
+  // SSE parsing: handles OpenAI, Anthropic, Gemini, Responses chunk formats
+  // Phase 3: first valid data chunk → onPhase('receiving_data')
+  // Phase 4: stream complete → onPhase('processing')
   // Calls onChunk(chunkText, fullText) for incremental UI updates
   return { isStreamed: true };
 }
 ```
+
+**`onPhase` callback contract**:
+- `onPhase` is optional (4th parameter). When provided, `fetchAndStream` calls it at lifecycle milestones.
+- Phase values and their meanings:
+  - `'waiting_response'` — HTTP response headers received (after `await fetch()` returns). For non-SSE responses, this is immediately followed by `'processing'`.
+  - `'receiving_data'` — First valid SSE data chunk with `chunkText` received. Only fires for SSE responses.
+  - `'processing'` — Stream reading complete (SSE) or response body fully received (non-SSE). UI rendering of the response follows.
+- All `fetchAndStream` call sites MUST pass `createOnPhaseCallback()` as the 4th argument to enable four-phase waiting status in the UI.
+
+### Four-Phase Waiting Status
+
+The waiting animation (`ensureWaitingEl()`) displays a dynamic label that reflects the current request lifecycle phase:
+
+| Phase | Label | Trigger |
+|---|---|---|
+| 1 | `连接中...` | `showWaiting()` called (before `fetch()`) |
+| 2 | `等待响应...` | `onPhase('waiting_response')` — HTTP headers received |
+| 3 | `接收数据中...` | `onPhase('receiving_data')` — first SSE data chunk |
+| 4 | `处理响应中...` | `onPhase('processing')` — stream/body complete |
+
+**Non-streaming path**: phases 2 and 3 are skipped; transitions directly from `连接中...` → `处理响应中...`.
+
+**Helper pattern**:
+```js
+const PHASE_LABELS = {
+  waiting_response: '等待响应...',
+  receiving_data: '接收数据中...',
+  processing: '处理响应中...'
+};
+
+function createOnPhaseCallback() {
+  return (phase) => {
+    if (PHASE_LABELS[phase]) updateWaitingLabel(PHASE_LABELS[phase]);
+  };
+}
+
+// Usage in all fetchAndStream call sites:
+const result = await fetchAndStream(url, options, onChunk, createOnPhaseCallback());
+```
+
+**Key implementation details**:
+- `waitingLabelEl` stores a reference to the label `<span>` inside the waiting animation element.
+- `updateWaitingLabel(text)` updates `waitingLabelEl.textContent`.
+- `showWaiting()` resets the label to `连接中...` each time it's called.
+- `hideWaiting()` removes the entire waiting element from the DOM.
 
 **Streaming callback pattern** (for incremental UI rendering):
 ```js
@@ -125,7 +175,8 @@ const result = await fetchAndStream(url, { method: 'POST', headers, body: JSON.s
       const preEl = assistantCard.querySelector('pre');
       if (preEl) preEl.textContent = fullText;
     }
-  }
+  },
+  createOnPhaseCallback()
 );
 if (result.isStreamed) {
   addBlock('响应 #1', { streamed: true, content: accText }, duration);
@@ -180,10 +231,31 @@ await fetchAndStream(endpoint, {
 Reusable text-only test items should be added as scenario definitions shared across vendor groups, then routed through the currently selected vendor's standard single-turn text request path:
 
 - OpenAI-compatible vendors: Chat Completions payload `{ model, messages: [{ role: 'user', content }] }` with `Authorization` masked in debug output.
+- OpenAI Responses API: payload `{ model, input: [{ role: 'user', content }] }` with `Authorization` masked in debug output. Content type is `input_text` (not `text`), image type is `input_image` (not `image_url`), and `image_url` is a flat string (not `{ url: "..." }`).
 - Anthropic-compatible vendors: Messages payload `{ model, max_tokens, messages: [{ role: 'user', content }] }` with `x-api-key` masked in debug output.
 - Gemini-compatible vendors: `streamGenerateContent` endpoint `{ contents: [{ role: 'user', parts: [{ text }] }] }` with `alt=sse` query parameter; the API key stays in the URL and must be sanitized by URL helpers when rendered. Use `:streamGenerateContent?alt=sse`, not `:generateContent`.
 
 If a text test has reference metadata, show it as manual comparison information after the response. Do not auto-score free-form model answers unless a dedicated validation tool/schema exists.
+
+### OpenAI Protocol Toggle
+
+OpenAI has two API protocols (Chat Completions and Responses). A segmented control (`#openaiProtocol`) between the vendor selector and test type buttons toggles between them. It is visible only when `currentVendor === 'openai'`.
+
+**State**: `let openaiProtocol = 'chat_completions';` — reset to `'chat_completions'` on vendor switch.
+
+**Affected scenarios**: all OpenAI test scenarios. The button list is dynamically generated via `getOpenaiTests()` based on `openaiProtocol` — no protocol labels on buttons (the toggle already indicates the protocol). Search button only appears under Responses (Chat Completions doesn't support it).
+
+**Request format differences**:
+
+| Aspect | Chat Completions | Responses API |
+|---|---|---|
+| Endpoint | `buildEndpoint(apiUrl)` | `buildResponsesEndpoint(apiUrl)` |
+| Top-level field | `messages[]` | `input[]` |
+| Text content type | `{ type: 'text', text }` | `{ type: 'input_text', text }` |
+| Image content type | `{ type: 'image_url', image_url: { url } }` | `{ type: 'input_image', image_url, detail }` |
+| Non-streamed response | `choices[0].message` | `output[].content[]` (find item with `type: 'message'`) |
+
+**Button labels**: no protocol suffix on any button — the toggle already indicates the protocol.
 
 ---
 

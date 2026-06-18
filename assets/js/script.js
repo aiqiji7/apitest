@@ -14,6 +14,7 @@
   const errorMessage = $('#errorMessage');
   const vendorTypeWrap = $('#vendorType');
   const testTypeWrap = $('#testType');
+  const openaiProtocolWrap = $('#openaiProtocol');
   const userInputEl = $('#userInput');
   const manageConfigBtn = $('#manageConfigBtn');
   const configModal = $('#configModal');
@@ -186,13 +187,15 @@
   }
 
   // Waiting inline loader helpers
+  let waitingLabelEl = null; // reference to the label span for dynamic phase updates
   function ensureWaitingEl() {
     if (waitingEl) return waitingEl;
     const wrap = document.createElement('div');
     wrap.className = 'waiting-inline';
     const label = document.createElement('span');
     label.className = 'label';
-    label.textContent = '请求中';
+    label.textContent = '连接中...';
+    waitingLabelEl = label;
     const dots = document.createElement('span');
     dots.className = 'dots';
     for (let i = 0; i < 3; i++) {
@@ -205,8 +208,13 @@
     waitingEl = wrap;
     return waitingEl;
   }
+  function updateWaitingLabel(text) {
+    if (waitingLabelEl) waitingLabelEl.textContent = text;
+  }
   function showWaiting() {
     const el = ensureWaitingEl();
+    // Reset label to initial phase
+    if (waitingLabelEl) waitingLabelEl.textContent = '连接中...';
     if (el.parentNode !== messageTimeline) {
       messageTimeline.appendChild(el);
     } else {
@@ -751,6 +759,8 @@
     // 占位留空：不再动态写入 placeholder
     // 初始化厂商分组和测试按钮
     renderTestButtons('openai');
+    // 默认厂商为 OpenAI，显示协议切换开关
+    if (openaiProtocolWrap) openaiProtocolWrap.style.display = '';
     updateRecentConnectionsButtonState();
     updateClearBtnState();
   });
@@ -780,15 +790,27 @@
     defaultInput: test.prompt
   }));
 
+  // OpenAI 测试按钮：根据当前协议动态生成，不标注协议名（由切换开关决定）
+  function getOpenaiTests() {
+    const proto = openaiProtocol; // 'chat_completions' 或 'responses'
+    const toolsScenario = proto === 'responses' ? 'responses_tools' : 'openai_tools';
+    const searchScenario = 'responses_search'; // 搜索仅 Responses API 支持
+    const imageLabel = proto === 'responses' ? '图片支持 (Responses)' : '图片支持';
+    const tests = [
+      { scenario: toolsScenario, label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
+    ];
+    // 搜索仅 Responses 协议下显示
+    if (proto === 'responses') {
+      tests.push({ scenario: searchScenario, label: '搜索', defaultInput: '搜索当前最新的Gemini旗舰模型是？' });
+    }
+    tests.push({ scenario: 'openai_image', label: imageLabel, defaultInput: '请描述这张图片' });
+    tests.push(...IQ_TEST_BUTTONS);
+    return tests;
+  }
+
   // 厂商分组配置
   const vendorTests = {
-    openai: [
-      { scenario: 'openai_tools', label: '工具调用 (Chat Completions)', defaultInput: 'RANDOM_CONVERT_TASK' },
-      { scenario: 'responses_tools', label: '工具调用 (Responses)', defaultInput: 'RANDOM_CONVERT_TASK' },
-      { scenario: 'responses_search', label: '搜索 (Responses)', defaultInput: '搜索当前最新的Gemini旗舰模型是？' },
-      { scenario: 'openai_image', label: '图片支持', defaultInput: '请描述这张图片' },
-      ...IQ_TEST_BUTTONS
-    ],
+    openai: [], // 由 getOpenaiTests() 动态生成
     anthropic: [
       { scenario: 'anthropic_tools', label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
       { scenario: 'anthropic_image', label: '图片支持', defaultInput: '请描述这张图片' },
@@ -822,12 +844,29 @@
   // 当前选中的厂商
   let currentVendor = 'openai';
 
+  // OpenAI 协议切换状态：'chat_completions' 或 'responses'
+  let openaiProtocol = 'chat_completions';
+
   // 当前活跃的测试场景
   let currentActiveScenario = null;
 
   // 是否启用流式响应
   function isStreamEnabled() {
     return !streamToggleEl || streamToggleEl.checked;
+  }
+
+  // Phase label mapping for fetchAndStream onPhase callback
+  const PHASE_LABELS = {
+    'waiting_response': '等待响应...',
+    'receiving_data': '接收数据中...',
+    'processing': '处理响应中...'
+  };
+
+  // Helper: create onPhase callback for fetchAndStream that updates the waiting label
+  function createOnPhaseCallback() {
+    return (phase) => {
+      if (PHASE_LABELS[phase]) updateWaitingLabel(PHASE_LABELS[phase]);
+    };
   }
 
   // 图片场景列表
@@ -885,7 +924,7 @@
     addInlineInfo(`${test.label} 对比参考：正确答案：${test.expectedAnswer}；参考思考时间：${test.expectedDuration}；本次响应耗时：${formatDuration(durationMs)}。未自动判分，请手动对比模型输出。`);
   }
 
-  async function sendStandardTextRequestForVendor({ vendor, apiKey, model, userText, endpoint, anthropicEndpoint, geminiStreamEndpoint, geminiEndpoint, signal }) {
+  async function sendStandardTextRequestForVendor({ vendor, apiKey, model, userText, endpoint, anthropicEndpoint, geminiStreamEndpoint, geminiEndpoint, signal, responsesEndpoint }) {
     let requestBody, requestHeaders, url;
     let userMessagePayload;
 
@@ -907,6 +946,16 @@
       requestHeaders = { 'Content-Type': 'application/json' };
       url = isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint;
       userMessagePayload = requestBody.contents[0];
+    } else if (vendor === 'openai' && openaiProtocol === 'responses') {
+      // OpenAI Responses API 格式
+      requestBody = {
+        model,
+        input: [{ role: 'user', content: userText }],
+        stream: isStreamEnabled()
+      };
+      requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+      url = responsesEndpoint;
+      userMessagePayload = requestBody.input[0];
     } else {
       requestBody = {
         model,
@@ -944,7 +993,7 @@
         headers: requestHeaders,
         body: JSON.stringify(requestBody),
         signal
-      }, updateAssistantMessage);
+      }, updateAssistantMessage, createOnPhaseCallback());
     } catch (err) {
       if (err && err.name === 'AbortError') throw err;
       // Enhance error for IQ test timeout situations
@@ -984,6 +1033,13 @@
         const candidate = result.json.candidates && result.json.candidates[0];
         if (candidate && candidate.content) {
           addMessage('assistant', '回答', candidate.content);
+        }
+      } else if (vendor === 'openai' && openaiProtocol === 'responses') {
+        // Responses API: output[].content[] for message items
+        const outputItems = result.json.output || [];
+        const messageItem = outputItems.find(item => item.type === 'message');
+        if (messageItem && messageItem.content && messageItem.content.length > 0) {
+          addMessage('assistant', '回答', messageItem.content);
         }
       } else {
         const choice = result.json.choices && result.json.choices[0];
@@ -1569,9 +1625,9 @@
 
   // 渲染测试按钮
   function renderTestButtons(vendor) {
-    const tests = vendorTests[vendor] || [];
+    const tests = vendor === 'openai' ? getOpenaiTests() : (vendorTests[vendor] || []);
     testTypeWrap.innerHTML = tests.map((t, i) =>
-      `<button class="seg-btn${i === 0 ? ' active' : ''}" data-scenario="${t.scenario}">${t.label}</button>`
+      `<button class="seg-btn${i === 0 ? ' active' : ''}" data-scenario="${t.scenario}">${escapeHtml(t.label)}</button>`
     ).join('');
     // 设置默认输入
     if (tests.length > 0) {
@@ -1584,6 +1640,12 @@
     abortCurrentRequest();
     currentVendor = vendor;
     $$('#vendorType .seg-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.vendor === vendor));
+    // 协议切换开关：仅在 OpenAI 下显示，切换厂商时重置为 Chat Completions
+    openaiProtocol = 'chat_completions';
+    if (openaiProtocolWrap) {
+      openaiProtocolWrap.style.display = vendor === 'openai' ? '' : 'none';
+      $$('#openaiProtocol .seg-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.protocol === 'chat_completions'));
+    }
     renderTestButtons(vendor);
     clearResults();
   }
@@ -1592,8 +1654,8 @@
   function setActiveScenario(scenario) {
     abortCurrentRequest();
     $$('#testType .seg-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.scenario === scenario));
-    // 查找对应的默认输入
-    const tests = vendorTests[currentVendor] || [];
+    // 查找对应的默认输入（OpenAI 使用动态生成的测试列表）
+    const tests = currentVendor === 'openai' ? getOpenaiTests() : (vendorTests[currentVendor] || []);
     const test = tests.find(t => t.scenario === scenario);
     if (test) {
       applyScenarioInput(scenario, test.defaultInput);
@@ -1606,6 +1668,19 @@
       const btn = e.target.closest('.seg-btn');
       if (!btn || !btn.dataset.vendor) return;
       setActiveVendor(btn.dataset.vendor);
+    });
+  }
+
+  // OpenAI 协议切换事件
+  if (openaiProtocolWrap) {
+    openaiProtocolWrap.addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn || !btn.dataset.protocol) return;
+      openaiProtocol = btn.dataset.protocol;
+      $$('#openaiProtocol .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.protocol === openaiProtocol));
+      // 重新渲染测试按钮（更新图片按钮标签）并重置到第一个场景
+      renderTestButtons(currentVendor);
+      clearResults();
     });
   }
 
@@ -1644,6 +1719,7 @@
     const geminiEndpoint = buildGeminiEndpoint(apiUrl, model, apiKey);
     const geminiStreamEndpoint = buildGeminiStreamEndpoint(apiUrl, model, apiKey);
     const anthropicEndpoint = buildAnthropicEndpoint(apiUrl);
+    const responsesEndpoint = buildResponsesEndpoint(apiUrl);
 
     try {
       requestPending = true; showWaiting();
@@ -1674,6 +1750,7 @@
           anthropicEndpoint,
           geminiStreamEndpoint,
           geminiEndpoint,
+          responsesEndpoint,
           signal
         });
         addIqTestReference(test, duration);
@@ -1748,7 +1825,7 @@
                 const preEl = assistantCard.querySelector('pre');
                 if (preEl) preEl.textContent = fullText;
               }
-            });
+            }, createOnPhaseCallback());
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - tStart);
@@ -1926,7 +2003,7 @@
                 const preEl = assistantCard.querySelector('pre');
                 if (preEl) preEl.textContent = fullText;
               }
-            });
+            }, createOnPhaseCallback());
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - aTStart);
@@ -2105,7 +2182,7 @@
                 const preEl = assistantCard.querySelector('pre');
                 if (preEl) preEl.textContent = fullText;
               }
-            });
+            }, createOnPhaseCallback());
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - gTStart);
@@ -2288,7 +2365,7 @@
                 const preEl = assistantCard.querySelector('pre');
                 if (preEl) preEl.textContent = fullText;
               }
-            });
+            }, createOnPhaseCallback());
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - rtTStart);
@@ -2458,7 +2535,7 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          });
+          }, createOnPhaseCallback());
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - rTStart);
             addInlineInfo('已收到流式响应，请手动检查搜索结果。');
@@ -2526,7 +2603,7 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          });
+          }, createOnPhaseCallback());
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - gsTStart);
           } else if (result.json) {
@@ -2577,7 +2654,7 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          });
+          }, createOnPhaseCallback());
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - guTStart);
           } else if (result.json) {
@@ -2605,13 +2682,29 @@
         }
       }
       else if (scenario === 'openai_image') {
-        // OpenAI Chat Completions 图片支持测试（单轮，流式）
-        const contentParts = [
-          { type: 'text', text: userText },
-          { type: 'image_url', image_url: { url: currentImageData } }
-        ];
-        const oReq = { model, messages: [{ role: 'user', content: contentParts }], stream: isStreamEnabled() };
-        const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+        // OpenAI 图片支持测试（单轮，流式）
+        let oReq, requestHeaders, imageUrl, contentParts;
+
+        if (openaiProtocol === 'responses') {
+          // Responses API 格式：input_image + input_text
+          contentParts = [
+            { type: 'input_text', text: userText },
+            { type: 'input_image', image_url: currentImageData, detail: 'auto' }
+          ];
+          oReq = { model, input: [{ role: 'user', content: contentParts }], stream: isStreamEnabled() };
+          requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+          imageUrl = responsesEndpoint;
+        } else {
+          // Chat Completions 格式：image_url + text
+          contentParts = [
+            { type: 'text', text: userText },
+            { type: 'image_url', image_url: { url: currentImageData } }
+          ];
+          oReq = { model, messages: [{ role: 'user', content: contentParts }], stream: isStreamEnabled() };
+          requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+          imageUrl = endpoint;
+        }
+
         addRequestBlock('请求 #1', oReq, requestHeaders);
         addMessage('user', '用户消息', contentParts);
         const oTStart = Date.now();
@@ -2619,7 +2712,7 @@
         let assistantCard = null;
         let oData = null;
         try {
-          const result = await fetchAndStream(endpoint, {
+          const result = await fetchAndStream(imageUrl, {
             method: 'POST',
             headers: requestHeaders,
             body: JSON.stringify(oReq),
@@ -2632,19 +2725,31 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          });
+          }, createOnPhaseCallback());
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - oTStart);
             addInlineSuccess('图片已成功被模型识别并处理');
           } else if (result.json) {
             oData = result.json;
             addBlock('响应 #1', oData, Date.now() - oTStart);
-            const choice = oData.choices && oData.choices[0];
-            if (choice && choice.message) {
-              addMessage('assistant', '回答', choice.message);
-              addInlineSuccess('图片已成功被模型识别并处理');
+            if (openaiProtocol === 'responses') {
+              // Responses API: output[].content[] for message items
+              const outputItems = oData.output || [];
+              const messageItem = outputItems.find(item => item.type === 'message');
+              if (messageItem && messageItem.content && messageItem.content.length > 0) {
+                addMessage('assistant', '回答', messageItem.content);
+                addInlineSuccess('图片已成功被模型识别并处理');
+              } else {
+                addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+              }
             } else {
-              addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+              const choice = oData.choices && oData.choices[0];
+              if (choice && choice.message) {
+                addMessage('assistant', '回答', choice.message);
+                addInlineSuccess('图片已成功被模型识别并处理');
+              } else {
+                addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+              }
             }
           }
         } catch (streamErr) {
@@ -2697,7 +2802,7 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          });
+          }, createOnPhaseCallback());
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - aTStart);
             addInlineSuccess('图片已成功被模型识别并处理');
@@ -2759,7 +2864,7 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          });
+          }, createOnPhaseCallback());
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - gTStart);
             addInlineSuccess('图片已成功被模型识别并处理');
@@ -2809,7 +2914,7 @@
   });
 
   // ---- network helpers ----
-  async function fetchAndStream(url, options, onChunk) {
+  async function fetchAndStream(url, options, onChunk, onPhase) {
     let res;
     try {
       res = await fetch(url, options);
@@ -2834,19 +2939,25 @@
 
     const isSse = contentType.includes('text/event-stream');
     if (!isSse || !res.body) {
-      // Fallback: non-streaming response
+      // Fallback: non-streaming response — skip phases 2 & 3, go directly to phase 4
       const text = await res.text().catch(() => {
         throw createNetworkFetchError(url, options);
       });
+      // Phase 4: processing response
+      if (onPhase) onPhase('processing');
       let json; try { json = JSON.parse(text); } catch { }
       return { json, text, contentType, isStreamed: false };
     }
+
+    // Phase 2: HTTP response headers received (SSE streaming path only)
+    if (onPhase) onPhase('waiting_response');
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let fullText = '';
     let buffer = '';
     let finalData = null;
+    let firstChunkReceived = false;
 
     // Tool call accumulators (provider-native formats)
     const openaiToolCalls = new Map();   // index -> { id, name, arguments }
@@ -2982,6 +3093,11 @@
             if (chunkText) {
               fullText += chunkText;
               if (onChunk) onChunk(chunkText, fullText);
+              // Phase 3: receiving data (first valid chunk)
+              if (!firstChunkReceived) {
+                firstChunkReceived = true;
+                if (onPhase) onPhase('receiving_data');
+              }
             }
 
             // Store the last non-empty chunk for potential final data
@@ -2993,6 +3109,9 @@
       // Ensure we release the reader on abort
       try { reader.releaseLock(); } catch { }
     }
+
+    // Phase 4: processing response (stream complete)
+    if (onPhase) onPhase('processing');
 
     fullText += decoder.decode();
 
