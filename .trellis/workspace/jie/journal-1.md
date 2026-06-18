@@ -105,3 +105,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: OpenAI Responses API 图片/IQ适配 + 四阶段等待状态
+
+**Date**: 2026-06-19
+**Task**: OpenAI Responses API 图片/IQ适配 + 四阶段等待状态
+**Branch**: `main`
+
+### Summary
+
+为 OpenAI 厂商增加 Responses API 协议切换开关，适配图片支持（input_image格式）和 IQ 测试（input[]格式）；将等待动画从单一'请求中'细化为四阶段：连接中→等待响应→接收数据中→处理响应中；更新 hook-guidelines spec 记录 onPhase 回调和四阶段模式。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `749dc5d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
