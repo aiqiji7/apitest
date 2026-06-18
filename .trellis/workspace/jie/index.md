@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
+- **Total Sessions**: 5
 - **Last Active**: 2026-06-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~140 | Active |
+| `journal-1.md` | ~181 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-06-19 | 流式思考内容解析 + UI交互优化 | `6700a78`, `0b13b52`, `9f9fe74`, `87574d1`, `bfbdb88`, `1a6855a`, `806415c`, `25fafd5`, `82dc313` | `main` |
 | 4 | 2026-06-19 | OpenAI Responses API 图片/IQ适配 + 四阶段等待状态 | `749dc5d` | `main` |
 | 3 | 2026-06-19 | 显示请求头、IQ测试题、代码块折叠、流式响应、流式工具调用检测 | `c3840a4` | `main` |
 | 2 | 2026-06-18 | API URL 最近连接按钮 | `92e76b0` | `main` |
