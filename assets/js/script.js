@@ -3466,8 +3466,14 @@
       card.insertBefore(section, pre);
     } else {
       const content = section.querySelector('.reasoning-content');
-      if (content) content.textContent = reasoningText;
+      if (content) {
+        content.textContent = reasoningText;
+        // Keep scrollbar at bottom to follow latest reasoning text
+        content.scrollTop = content.scrollHeight;
+      }
     }
+    // Keep page scrolled to latest message
+    scrollLatestIntoView();
   }
 
   // Finalize reasoning section after streaming completes

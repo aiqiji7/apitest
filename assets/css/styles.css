@@ -1585,6 +1585,6 @@ body {
     border-top: 1px solid #ddd6fe;
     font-family: ui-monospace, monospace;
     line-height: 1.6;
-    max-height: 400px;
+    max-height: 200px;
     overflow-y: auto;
 }
