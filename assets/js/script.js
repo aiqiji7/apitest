@@ -242,7 +242,6 @@
     el.className = 'info-inline';
     el.textContent = String(text || '提示');
     messageTimeline.appendChild(el);
-    scrollLatestIntoView();
     updateClearBtnState();
     return el;
   }
@@ -253,7 +252,6 @@
     el.className = 'success-inline';
     el.textContent = String(text || '成功');
     messageTimeline.appendChild(el);
-    scrollLatestIntoView();
     updateClearBtnState();
     return el;
   }
@@ -313,7 +311,6 @@
       }
     } catch { /* 附加原始内容失败时安静降级 */ }
     // 滚动到最新位置（错误块所在）
-    scrollLatestIntoView();
     updateClearBtnState();
     return el;
   }
@@ -538,8 +535,6 @@
     messageTimeline.appendChild(card);
     // Keep waiting loader under the latest message while pending
     if (requestPending) { showWaiting(); }
-    // Scroll page so that the latest message sits at page top
-    scrollLatestIntoView();
     updateClearBtnState();
     return card;
   }
@@ -3481,8 +3476,6 @@
         content.scrollTop = content.scrollHeight;
       }
     }
-    // Keep page scrolled to latest message
-    scrollLatestIntoView();
   }
 
   // Finalize reasoning section after streaming completes
