@@ -3428,7 +3428,12 @@
     header.addEventListener('click', () => {
       section.classList.toggle('collapsed');
       const toggle = header.querySelector('.reasoning-toggle');
-      toggle.textContent = section.classList.contains('collapsed') ? '▶' : '▼';
+      const collapsed = section.classList.contains('collapsed');
+      toggle.textContent = collapsed ? '▶' : '▼';
+      if (!collapsed) {
+        const content = section.querySelector('.reasoning-content');
+        if (content) content.scrollTop = content.scrollHeight;
+      }
     });
 
     const content = document.createElement('pre');
@@ -3458,7 +3463,12 @@
       header.addEventListener('click', () => {
         section.classList.toggle('collapsed');
         const toggle = header.querySelector('.reasoning-toggle');
-        toggle.textContent = section.classList.contains('collapsed') ? '▶' : '▼';
+        const collapsed = section.classList.contains('collapsed');
+        toggle.textContent = collapsed ? '▶' : '▼';
+        if (!collapsed) {
+          const content = section.querySelector('.reasoning-content');
+          if (content) content.scrollTop = content.scrollHeight;
+        }
       });
 
       const content = document.createElement('pre');
