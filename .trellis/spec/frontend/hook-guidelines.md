@@ -94,9 +94,9 @@ All API requests MUST explicitly request streaming. The `stream` property in req
 - **Gotcha**: Tool-calling scenarios must also respect the stream toggle — use `isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint` to select the correct endpoint.
 - SSE response: `data:` lines with `candidates[0].content.parts[0].text`.
 
-**`fetchAndStream(url, options, onChunk, onPhase)` helper**:
+**`fetchAndStream(url, options, onChunk, onPhase, onReasoningChunk)` helper**:
 ```js
-async function fetchAndStream(url, options, onChunk, onPhase) {
+async function fetchAndStream(url, options, onChunk, onPhase, onReasoningChunk) {
   const res = await fetch(url, options);
   // Phase 2: HTTP response headers received
   if (onPhase) onPhase('waiting_response');
@@ -107,15 +107,38 @@ async function fetchAndStream(url, options, onChunk, onPhase) {
     const text = await res.text();
     if (onPhase) onPhase('processing');
     const json = JSON.parse(text);
-    return { json, text, contentType, isStreamed: false };
+    return { json, text, contentType, isStreamed: false, reasoningText: extractReasoningFromJson(json) };
   }
   // SSE parsing: handles OpenAI, Anthropic, Gemini, Responses chunk formats
   // Phase 3: first valid data chunk → onPhase('receiving_data')
   // Phase 4: stream complete → onPhase('processing')
   // Calls onChunk(chunkText, fullText) for incremental UI updates
-  return { isStreamed: true };
+  // Calls onReasoningChunk(reasoningChunk, fullReasoningText) for reasoning updates
+  return { isStreamed: true, reasoningText };
 }
 ```
+
+**`onReasoningChunk` callback contract**:
+- `onReasoningChunk` is optional (5th parameter). When provided, `fetchAndStream` calls it for each reasoning/thinking chunk.
+- Signature: `onReasoningChunk(reasoningChunk, fullReasoningText)` — mirrors `onChunk` pattern.
+- Reasoning chunks also trigger `onPhase('receiving_data')` if no content chunk has arrived yet.
+
+**Reasoning field detection per provider**:
+
+| Provider | Streaming Field | Non-streaming Field |
+|---|---|---|
+| DeepSeek/Kimi/Qwen/GLM | `delta.reasoning_content` | `choices[0].message.reasoning_content` |
+| Ollama/vLLM | `delta.reasoning` | `choices[0].message.reasoning` |
+| Anthropic | `thinking_delta` in content blocks | `content[].thinking` (type: "thinking") |
+| Responses API | `response.reasoning_text.delta` / `response.reasoning_summary_text.delta` | `output[].reasoning.summary` |
+| Gemini | `parts[].thoughtText` | `parts[].thoughtText` |
+
+**UI: Reasoning section in message cards**:
+- `addReasoningToCard(card, reasoningText)` — inserts a collapsible reasoning section above the `<pre>` content in a message card.
+- Default state: collapsed. Click header to toggle.
+- Visual: purple left border, light purple background, italic content, "思考过程" label.
+- During streaming: `updateReasoningInCard(card, reasoningText)` shows "思考中..." label and expands.
+- After streaming: `finalizeReasoningInCard(card)` changes label to "思考过程" and collapses.
 
 **`onPhase` callback contract**:
 - `onPhase` is optional (4th parameter). When provided, `fetchAndStream` calls it at lifecycle milestones.

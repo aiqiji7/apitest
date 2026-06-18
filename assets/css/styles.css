@@ -1536,3 +1536,55 @@ body {
     color: #94a3b8;
     font-weight: normal;
 }
+
+/* Reasoning / thinking section in message cards */
+.reasoning-section {
+    margin-bottom: 8px;
+    border-left: 3px solid #a78bfa;
+    background: #f5f3ff;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.reasoning-section.collapsed .reasoning-content {
+    display: none;
+}
+
+.reasoning-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 0.85em;
+    color: #7c3aed;
+    user-select: none;
+}
+
+.reasoning-icon {
+    font-size: 1em;
+}
+
+.reasoning-label {
+    font-weight: 600;
+    flex: 1;
+}
+
+.reasoning-toggle {
+    font-size: 0.75em;
+}
+
+.reasoning-content {
+    padding: 8px 12px;
+    margin: 0;
+    font-size: 0.85em;
+    color: #5b21b6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-style: italic;
+    border-top: 1px solid #ddd6fe;
+    font-family: ui-monospace, monospace;
+    line-height: 1.6;
+    max-height: 400px;
+    overflow-y: auto;
+}

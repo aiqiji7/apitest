@@ -974,6 +974,7 @@
     let assistantCard = null;
     let accumulatedText = '';
     let streamedChunks = 0;
+    let accumulatedReasoning = '';
 
     const updateAssistantMessage = (chunkText, fullText) => {
       accumulatedText = fullText;
@@ -986,6 +987,14 @@
       streamedChunks++;
     };
 
+    const updateReasoningMessage = (reasoningChunk, fullReasoning) => {
+      accumulatedReasoning = fullReasoning;
+      if (!assistantCard) {
+        assistantCard = addMessage('assistant', '回答（流式）', '');
+      }
+      updateReasoningInCard(assistantCard, fullReasoning);
+    };
+
     let result;
     try {
       result = await fetchAndStream(url, {
@@ -993,7 +1002,7 @@
         headers: requestHeaders,
         body: JSON.stringify(requestBody),
         signal
-      }, updateAssistantMessage, createOnPhaseCallback());
+      }, updateAssistantMessage, createOnPhaseCallback(), updateReasoningMessage);
     } catch (err) {
       if (err && err.name === 'AbortError') throw err;
       // Enhance error for IQ test timeout situations
@@ -1013,6 +1022,7 @@
     // Build response block: show full JSON if non-streamed, otherwise show text summary
     if (result.isStreamed) {
       const summary = { streamed: true, chunks: streamedChunks, content: accumulatedText };
+      if (accumulatedReasoning) summary.reasoning = accumulatedReasoning;
       addBlock('响应 #1', summary, duration);
 
       // Update assistant message label to remove streaming indicator
@@ -1021,31 +1031,38 @@
         if (labelEl) {
           labelEl.textContent = '· 回答';
         }
+        // Finalize reasoning section (collapse it)
+        finalizeReasoningInCard(assistantCard, accumulatedReasoning);
       }
     } else if (result.json) {
       addBlock('响应 #1', result.json, duration);
       // Non-streamed: extract content from JSON response
+      let nonStreamCard = null;
       if (vendor === 'anthropic') {
         if (result.json.content && result.json.content.length > 0) {
-          addMessage('assistant', '回答', result.json.content);
+          nonStreamCard = addMessage('assistant', '回答', result.json.content);
         }
       } else if (vendor === 'google') {
         const candidate = result.json.candidates && result.json.candidates[0];
         if (candidate && candidate.content) {
-          addMessage('assistant', '回答', candidate.content);
+          nonStreamCard = addMessage('assistant', '回答', candidate.content);
         }
       } else if (vendor === 'openai' && openaiProtocol === 'responses') {
         // Responses API: output[].content[] for message items
         const outputItems = result.json.output || [];
         const messageItem = outputItems.find(item => item.type === 'message');
         if (messageItem && messageItem.content && messageItem.content.length > 0) {
-          addMessage('assistant', '回答', messageItem.content);
+          nonStreamCard = addMessage('assistant', '回答', messageItem.content);
         }
       } else {
         const choice = result.json.choices && result.json.choices[0];
         if (choice && choice.message) {
-          addMessage('assistant', '回答', choice.message);
+          nonStreamCard = addMessage('assistant', '回答', choice.message);
         }
+      }
+      // Add reasoning section to non-streamed card
+      if (nonStreamCard && result.reasoningText) {
+        addReasoningToCard(nonStreamCard, result.reasoningText);
       }
     } else {
       addBlock('响应 #1', { text: result.text }, duration);
@@ -1808,6 +1825,7 @@
 
           const tStart = Date.now();
           let accText = '';
+          let accReasoning = '';
           let assistantCard = null;
           let data = null;
           let isStreamed = false;
@@ -1825,10 +1843,18 @@
                 const preEl = assistantCard.querySelector('pre');
                 if (preEl) preEl.textContent = fullText;
               }
-            }, createOnPhaseCallback());
+            }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
+              accReasoning = fullReasoning;
+              if (!assistantCard) {
+                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, '');
+              }
+              updateReasoningInCard(assistantCard, fullReasoning);
+            });
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - tStart);
+              // Finalize reasoning section
+              finalizeReasoningInCard(assistantCard, accReasoning);
               if (result.toolCalls && result.toolCalls.length > 0) {
                 // Build assistant message from accumulated streaming tool calls
                 const assistantMsg = { role: 'assistant', content: accText || null, tool_calls: result.toolCalls };
@@ -1891,7 +1917,8 @@
           if (!choice) break;
           const assistantMsg = choice.message;
           messages.push(assistantMsg);
-          addMessage('assistant', `模型响应 #${turn}`, assistantMsg);
+          const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, assistantMsg);
+          if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
 
           if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
             for (const toolCall of assistantMsg.tool_calls) {
@@ -1986,6 +2013,7 @@
           addRequestBlock(`请求 #${turn}`, aReq, requestHeaders);
           const aTStart = Date.now();
           let accText = '';
+          let accReasoning = '';
           let assistantCard = null;
           let aData = null;
           let isStreamed = false;
@@ -2003,10 +2031,18 @@
                 const preEl = assistantCard.querySelector('pre');
                 if (preEl) preEl.textContent = fullText;
               }
-            }, createOnPhaseCallback());
+            }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
+              accReasoning = fullReasoning;
+              if (!assistantCard) {
+                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, '');
+              }
+              updateReasoningInCard(assistantCard, fullReasoning);
+            });
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - aTStart);
+              // Finalize reasoning section
+              finalizeReasoningInCard(assistantCard, accReasoning);
               if (result.toolCalls && result.toolCalls.length > 0) {
                 // Build content array from accumulated streaming tool calls
                 const contentArr = [];
@@ -2075,7 +2111,8 @@
 
           const contentArr = Array.isArray(aData && aData.content) ? aData.content : [];
           messages.push({ role: 'assistant', content: contentArr });
-          addMessage('assistant', `模型响应 #${turn}`, contentArr);
+          const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, contentArr);
+          if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
 
           const toolUses = contentArr.filter(p => p && p.type === 'tool_use');
           if (toolUses.length > 0) {
@@ -2170,6 +2207,7 @@
 
           const gTStart = Date.now();
           let accText = '';
+          let accReasoning = '';
           let assistantCard = null;
           let gData = null;
           let isStreamed = false;
@@ -2182,10 +2220,18 @@
                 const preEl = assistantCard.querySelector('pre');
                 if (preEl) preEl.textContent = fullText;
               }
-            }, createOnPhaseCallback());
+            }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
+              accReasoning = fullReasoning;
+              if (!assistantCard) {
+                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, '');
+              }
+              updateReasoningInCard(assistantCard, fullReasoning);
+            });
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - gTStart);
+              // Finalize reasoning section
+              finalizeReasoningInCard(assistantCard, accReasoning);
               if (result.toolCalls && result.toolCalls.length > 0) {
                 // Build model content from accumulated streaming function calls
                 const parts = [];
@@ -2253,7 +2299,8 @@
           if (!gContent) break;
 
           contents.push(gContent);
-          addMessage('assistant', `模型响应 #${turn}`, gContent);
+          const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, gContent);
+          if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
 
           const fcs = (gContent.parts || []).filter(p => p.functionCall);
           if (fcs.length > 0) {
@@ -2348,6 +2395,7 @@
 
           const rtTStart = Date.now();
           let accText = '';
+          let accReasoning = '';
           let assistantCard = null;
           let rtData = null;
           let isStreamed = false;
@@ -2365,10 +2413,18 @@
                 const preEl = assistantCard.querySelector('pre');
                 if (preEl) preEl.textContent = fullText;
               }
-            }, createOnPhaseCallback());
+            }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
+              accReasoning = fullReasoning;
+              if (!assistantCard) {
+                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, '');
+              }
+              updateReasoningInCard(assistantCard, fullReasoning);
+            });
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - rtTStart);
+              // Finalize reasoning section
+              finalizeReasoningInCard(assistantCard, accReasoning);
               if (result.toolCalls && result.toolCalls.length > 0) {
                 // Build outputs from accumulated streaming function calls
                 const outputs = [];
@@ -2451,13 +2507,16 @@
           history.push(...outputs);
 
           if (rtData.output_text) {
-            addMessage('assistant', `模型响应 #${turn}`, { text: rtData.output_text });
+            const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, { text: rtData.output_text });
+            if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
           } else {
             const msgItem = outputs.find(item => item && item.type === 'message');
             if (msgItem && msgItem.content) {
-              addMessage('assistant', `模型响应 #${turn}`, msgItem.content);
+              const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, msgItem.content);
+              if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
             } else if (outputs.length > 0) {
-              addMessage('assistant', `模型响应 #${turn}`, outputs);
+              const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, outputs);
+              if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
             }
           }
 
@@ -2517,6 +2576,7 @@
         addMessage('user', '用户消息', rReq.input[0]);
         const rTStart = Date.now();
         let accText = '';
+        let accReasoning = '';
         let assistantCard = null;
         let rData = null;
         let hasWebSearchCall = false;
@@ -2535,9 +2595,17 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          }, createOnPhaseCallback());
+          }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
+            accReasoning = fullReasoning;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', '');
+            }
+            updateReasoningInCard(assistantCard, fullReasoning);
+          });
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - rTStart);
+            // Finalize reasoning section
+            finalizeReasoningInCard(assistantCard, accReasoning);
             addInlineInfo('已收到流式响应，请手动检查搜索结果。');
           } else if (result.json) {
             rData = result.json;
@@ -2550,14 +2618,16 @@
             }
 
             // 显示回答内容
+            let searchCard = null;
             if (rData.output_text) {
-              addMessage('assistant', '回答', { text: rData.output_text });
+              searchCard = addMessage('assistant', '回答', { text: rData.output_text });
             } else if (Array.isArray(output)) {
               const msgItem = output.find(item => item && item.type === 'message');
               if (msgItem && msgItem.content) {
-                addMessage('assistant', '回答', msgItem.content);
+                searchCard = addMessage('assistant', '回答', msgItem.content);
               }
             }
+            if (searchCard && result.reasoningText) addReasoningToCard(searchCard, result.reasoningText);
 
             // 未触发搜索工具调用的提示放在响应下面
             if (!hasWebSearchCall) {
@@ -2590,6 +2660,7 @@
         addMessage('user', '用户消息', gReq.contents[0]);
         const gsTStart = Date.now();
         let accText = '';
+        let accReasoning = '';
         let assistantCard = null;
         let gData = null;
         let hasGroundingMetadata = false;
@@ -2603,14 +2674,24 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          }, createOnPhaseCallback());
+          }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
+            accReasoning = fullReasoning;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', '');
+            }
+            updateReasoningInCard(assistantCard, fullReasoning);
+          });
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - gsTStart);
+            // Finalize reasoning section
+            finalizeReasoningInCard(assistantCard, accReasoning);
           } else if (result.json) {
             gData = result.json;
             addBlock('响应 #1', gData, Date.now() - gsTStart);
             const cand = gData.candidates && gData.candidates[0];
-            if (cand && cand.content) { addMessage('assistant', '回答', cand.content); }
+            let searchCard = null;
+            if (cand && cand.content) { searchCard = addMessage('assistant', '回答', cand.content); }
+            if (searchCard && result.reasoningText) addReasoningToCard(searchCard, result.reasoningText);
             hasGroundingMetadata = cand && cand.groundingMetadata;
           }
         } catch (err) {
@@ -2641,6 +2722,7 @@
         addMessage('user', '用户消息', gReq.contents[0]);
         const guTStart = Date.now();
         let accText = '';
+        let accReasoning = '';
         let assistantCard = null;
         let gData = null;
         let hasGroundingMetadata = false;
@@ -2654,14 +2736,24 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          }, createOnPhaseCallback());
+          }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
+            accReasoning = fullReasoning;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', '');
+            }
+            updateReasoningInCard(assistantCard, fullReasoning);
+          });
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - guTStart);
+            // Finalize reasoning section
+            finalizeReasoningInCard(assistantCard, accReasoning);
           } else if (result.json) {
             gData = result.json;
             addBlock('响应 #1', gData, Date.now() - guTStart);
             const cand = gData.candidates && gData.candidates[0];
-            if (cand && cand.content) { addMessage('assistant', '回答', cand.content); }
+            let urlCard = null;
+            if (cand && cand.content) { urlCard = addMessage('assistant', '回答', cand.content); }
+            if (urlCard && result.reasoningText) addReasoningToCard(urlCard, result.reasoningText);
             hasGroundingMetadata = cand && cand.groundingMetadata;
           }
         } catch (err) {
@@ -2709,6 +2801,7 @@
         addMessage('user', '用户消息', contentParts);
         const oTStart = Date.now();
         let accText = '';
+        let accReasoning = '';
         let assistantCard = null;
         let oData = null;
         try {
@@ -2725,19 +2818,28 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          }, createOnPhaseCallback());
+          }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
+            accReasoning = fullReasoning;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', '');
+            }
+            updateReasoningInCard(assistantCard, fullReasoning);
+          });
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - oTStart);
+            // Finalize reasoning section
+            finalizeReasoningInCard(assistantCard, accReasoning);
             addInlineSuccess('图片已成功被模型识别并处理');
           } else if (result.json) {
             oData = result.json;
             addBlock('响应 #1', oData, Date.now() - oTStart);
+            let imgCard = null;
             if (openaiProtocol === 'responses') {
               // Responses API: output[].content[] for message items
               const outputItems = oData.output || [];
               const messageItem = outputItems.find(item => item.type === 'message');
               if (messageItem && messageItem.content && messageItem.content.length > 0) {
-                addMessage('assistant', '回答', messageItem.content);
+                imgCard = addMessage('assistant', '回答', messageItem.content);
                 addInlineSuccess('图片已成功被模型识别并处理');
               } else {
                 addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
@@ -2745,12 +2847,13 @@
             } else {
               const choice = oData.choices && oData.choices[0];
               if (choice && choice.message) {
-                addMessage('assistant', '回答', choice.message);
+                imgCard = addMessage('assistant', '回答', choice.message);
                 addInlineSuccess('图片已成功被模型识别并处理');
               } else {
                 addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
               }
             }
+            if (imgCard && result.reasoningText) addReasoningToCard(imgCard, result.reasoningText);
           }
         } catch (streamErr) {
           if (streamErr && streamErr.name === 'AbortError') throw streamErr;
@@ -2787,6 +2890,7 @@
         addMessage('user', '用户消息', aReq.messages[0].content);
         const aTStart = Date.now();
         let accText = '';
+        let accReasoning = '';
         let assistantCard = null;
         try {
           const result = await fetchAndStream(anthropicEndpoint, {
@@ -2802,19 +2906,29 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          }, createOnPhaseCallback());
+          }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
+            accReasoning = fullReasoning;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', '');
+            }
+            updateReasoningInCard(assistantCard, fullReasoning);
+          });
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - aTStart);
+            // Finalize reasoning section
+            finalizeReasoningInCard(assistantCard, accReasoning);
             addInlineSuccess('图片已成功被模型识别并处理');
           } else if (result.json) {
             const aData = result.json;
             addBlock('响应 #1', aData, Date.now() - aTStart);
+            let imgCard = null;
             if (aData.content && aData.content.length > 0) {
-              addMessage('assistant', '回答', aData.content);
+              imgCard = addMessage('assistant', '回答', aData.content);
               addInlineSuccess('图片已成功被模型识别并处理');
             } else {
               addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
             }
+            if (imgCard && result.reasoningText) addReasoningToCard(imgCard, result.reasoningText);
           }
         } catch (streamErr) {
           if (streamErr && streamErr.name === 'AbortError') throw streamErr;
@@ -2849,6 +2963,7 @@
         addMessage('user', '用户消息', gReq.contents[0]);
         const gTStart = Date.now();
         let accText = '';
+        let accReasoning = '';
         let assistantCard = null;
         try {
           const result = await fetchAndStream(isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint, {
@@ -2864,20 +2979,30 @@
               const preEl = assistantCard.querySelector('pre');
               if (preEl) preEl.textContent = fullText;
             }
-          }, createOnPhaseCallback());
+          }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
+            accReasoning = fullReasoning;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', '');
+            }
+            updateReasoningInCard(assistantCard, fullReasoning);
+          });
           if (result.isStreamed) {
             addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - gTStart);
+            // Finalize reasoning section
+            finalizeReasoningInCard(assistantCard, accReasoning);
             addInlineSuccess('图片已成功被模型识别并处理');
           } else if (result.json) {
             const gData = result.json;
             addBlock('响应 #1', gData, Date.now() - gTStart);
             const cand = gData.candidates && gData.candidates[0];
+            let imgCard = null;
             if (cand && cand.content) {
-              addMessage('assistant', '回答', cand.content);
+              imgCard = addMessage('assistant', '回答', cand.content);
               addInlineSuccess('图片已成功被模型识别并处理');
             } else {
               addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
             }
+            if (imgCard && result.reasoningText) addReasoningToCard(imgCard, result.reasoningText);
           }
         } catch (streamErr) {
           if (streamErr && streamErr.name === 'AbortError') throw streamErr;
@@ -2914,7 +3039,7 @@
   });
 
   // ---- network helpers ----
-  async function fetchAndStream(url, options, onChunk, onPhase) {
+  async function fetchAndStream(url, options, onChunk, onPhase, onReasoningChunk) {
     let res;
     try {
       res = await fetch(url, options);
@@ -2946,7 +3071,12 @@
       // Phase 4: processing response
       if (onPhase) onPhase('processing');
       let json; try { json = JSON.parse(text); } catch { }
-      return { json, text, contentType, isStreamed: false };
+      // Extract reasoning from non-streaming JSON response
+      let nonStreamReasoning = null;
+      if (json) {
+        nonStreamReasoning = extractReasoningFromJson(json);
+      }
+      return { json, text, contentType, isStreamed: false, reasoningText: nonStreamReasoning };
     }
 
     // Phase 2: HTTP response headers received (SSE streaming path only)
@@ -2959,12 +3089,17 @@
     let finalData = null;
     let firstChunkReceived = false;
 
+    // Reasoning/thinking accumulators
+    let reasoningText = '';
+    let hasReceivedReasoning = false;
+
     // Tool call accumulators (provider-native formats)
     const openaiToolCalls = new Map();   // index -> { id, name, arguments }
     const anthropicToolCalls = new Map(); // index -> { id, name, jsonBuf }
     const geminiToolCalls = [];           // array of { name, args, id? }
     const responsesToolCalls = new Map(); // output_index -> { id, name, call_id, arguments }
     let currentEventType = '';            // track Anthropic/Responses SSE event types
+    let anthropicInThinkingBlock = false;  // track Anthropic thinking content block
 
     try {
       while (true) {
@@ -3002,6 +3137,17 @@
               if (delta && delta.content) {
                 chunkText = delta.content;
               }
+              // OpenAI Chat Completions: reasoning_content / reasoning extraction
+              // Supports DeepSeek, Kimi, Qwen, GLM (reasoning_content) and Ollama/vLLM (reasoning)
+              if (delta && (delta.reasoning_content || delta.reasoning)) {
+                const reasoningChunk = delta.reasoning_content || delta.reasoning;
+                reasoningText += reasoningChunk;
+                if (onReasoningChunk) onReasoningChunk(reasoningChunk, reasoningText);
+                if (!hasReceivedReasoning) {
+                  hasReceivedReasoning = true;
+                  if (!firstChunkReceived && onPhase) onPhase('receiving_data');
+                }
+              }
               // OpenAI Chat Completions: tool_calls accumulation
               if (delta && delta.tool_calls) {
                 for (const tc of delta.tool_calls) {
@@ -3022,20 +3168,42 @@
               chunkText = chunk.delta.text;
             }
 
-            // Anthropic Messages: tool_use accumulation
-            if (chunk.type === 'content_block_start' && chunk.content_block && chunk.content_block.type === 'tool_use') {
-              const idx = chunk.index;
-              anthropicToolCalls.set(idx, {
-                id: chunk.content_block.id,
-                name: chunk.content_block.name,
-                jsonBuf: ''
-              });
-            }
-            if (chunk.type === 'content_block_delta' && chunk.delta && chunk.delta.type === 'input_json_delta') {
-              const existing = anthropicToolCalls.get(chunk.index);
-              if (existing) {
-                existing.jsonBuf += chunk.delta.partial_json;
+            // Anthropic Messages: thinking block tracking
+            if (chunk.type === 'content_block_start' && chunk.content_block) {
+              if (chunk.content_block.type === 'thinking') {
+                anthropicInThinkingBlock = true;
               }
+              // tool_use accumulation (existing)
+              if (chunk.content_block.type === 'tool_use') {
+                const idx = chunk.index;
+                anthropicToolCalls.set(idx, {
+                  id: chunk.content_block.id,
+                  name: chunk.content_block.name,
+                  jsonBuf: ''
+                });
+              }
+            }
+            // Anthropic Messages: thinking_delta extraction
+            if (chunk.type === 'content_block_delta' && chunk.delta) {
+              if (chunk.delta.type === 'thinking_delta' && chunk.delta.thinking) {
+                reasoningText += chunk.delta.thinking;
+                if (onReasoningChunk) onReasoningChunk(chunk.delta.thinking, reasoningText);
+                if (!hasReceivedReasoning) {
+                  hasReceivedReasoning = true;
+                  if (!firstChunkReceived && onPhase) onPhase('receiving_data');
+                }
+              }
+              // input_json_delta accumulation (existing)
+              if (chunk.delta.type === 'input_json_delta') {
+                const existing = anthropicToolCalls.get(chunk.index);
+                if (existing) {
+                  existing.jsonBuf += chunk.delta.partial_json;
+                }
+              }
+            }
+            // Anthropic: reset thinking block flag on content_block_stop
+            if (chunk.type === 'content_block_stop') {
+              anthropicInThinkingBlock = false;
             }
 
             // Gemini: candidates[0].content.parts text extraction
@@ -3047,6 +3215,17 @@
                 if (part.text) {
                   chunkText = part.text;
                   break;
+                }
+              }
+              // Gemini: thoughtPart extraction (thinking content)
+              for (const part of parts) {
+                if (part.thought && part.thoughtText) {
+                  reasoningText += part.thoughtText;
+                  if (onReasoningChunk) onReasoningChunk(part.thoughtText, reasoningText);
+                  if (!hasReceivedReasoning) {
+                    hasReceivedReasoning = true;
+                    if (!firstChunkReceived && onPhase) onPhase('receiving_data');
+                  }
                 }
               }
               // Gemini: functionCall accumulation (complete objects, not deltas)
@@ -3072,6 +3251,25 @@
             // OpenAI Responses API: text delta extraction
             if (!chunkText && chunk.type === 'response.output_text.delta' && typeof chunk.delta === 'string') {
               chunkText = chunk.delta;
+            }
+
+            // OpenAI Responses API: reasoning_text.delta extraction
+            if (chunk.type === 'response.reasoning_text.delta' && typeof chunk.delta === 'string') {
+              reasoningText += chunk.delta;
+              if (onReasoningChunk) onReasoningChunk(chunk.delta, reasoningText);
+              if (!hasReceivedReasoning) {
+                hasReceivedReasoning = true;
+                if (!firstChunkReceived && onPhase) onPhase('receiving_data');
+              }
+            }
+            // OpenAI Responses API: reasoning_summary_text.delta extraction
+            if (chunk.type === 'response.reasoning_summary_text.delta' && typeof chunk.delta === 'string') {
+              reasoningText += chunk.delta;
+              if (onReasoningChunk) onReasoningChunk(chunk.delta, reasoningText);
+              if (!hasReceivedReasoning) {
+                hasReceivedReasoning = true;
+                if (!firstChunkReceived && onPhase) onPhase('receiving_data');
+              }
             }
 
             // OpenAI Responses API: function_call accumulation
@@ -3158,7 +3356,140 @@
         }));
     }
 
-    return { json: null, text: fullText, contentType, isStreamed: true, toolCalls };
+    return { json: null, text: fullText, contentType, isStreamed: true, toolCalls, reasoningText: reasoningText || null };
+  }
+
+  // Extract reasoning/thinking text from non-streaming JSON responses
+  function extractReasoningFromJson(json) {
+    if (!json) return null;
+
+    // Chat Completions: choices[0].message.reasoning_content or choices[0].message.reasoning
+    if (json.choices && json.choices[0] && json.choices[0].message) {
+      const msg = json.choices[0].message;
+      if (msg.reasoning_content) return msg.reasoning_content;
+      if (msg.reasoning) return msg.reasoning;
+    }
+
+    // Anthropic: content[] blocks with type "thinking"
+    if (json.content && Array.isArray(json.content)) {
+      let thinking = '';
+      for (const block of json.content) {
+        if (block.type === 'thinking' && block.thinking) {
+          thinking += block.thinking;
+        }
+      }
+      if (thinking) return thinking;
+    }
+
+    // Responses API: output[] items with type "reasoning"
+    if (json.output && Array.isArray(json.output)) {
+      let reasoning = '';
+      for (const item of json.output) {
+        if (item.type === 'reasoning' && item.summary) {
+          for (const part of item.summary) {
+            if (part.text) reasoning += part.text;
+          }
+        }
+      }
+      if (reasoning) return reasoning;
+    }
+
+    // Gemini: candidates[0].content.parts with thought
+    if (json.candidates && json.candidates[0] && json.candidates[0].content &&
+        json.candidates[0].content.parts) {
+      let thinking = '';
+      for (const part of json.candidates[0].content.parts) {
+        if (part.thought && part.thoughtText) {
+          thinking += part.thoughtText;
+        }
+      }
+      if (thinking) return thinking;
+    }
+
+    return null;
+  }
+
+  // Add a collapsible reasoning section to a message card
+  function addReasoningToCard(card, reasoningText) {
+    if (!reasoningText) return;
+    const pre = card.querySelector('pre');
+    if (!pre) return;
+
+    const section = document.createElement('div');
+    section.className = 'reasoning-section collapsed';
+
+    const header = document.createElement('div');
+    header.className = 'reasoning-header';
+    header.innerHTML = '<span class="reasoning-icon">💭</span><span class="reasoning-label">思考过程</span><span class="reasoning-toggle">▶</span>';
+    header.addEventListener('click', () => {
+      section.classList.toggle('collapsed');
+      const toggle = header.querySelector('.reasoning-toggle');
+      toggle.textContent = section.classList.contains('collapsed') ? '▶' : '▼';
+    });
+
+    const content = document.createElement('pre');
+    content.className = 'reasoning-content';
+    content.textContent = reasoningText;
+
+    section.appendChild(header);
+    section.appendChild(content);
+    card.insertBefore(section, pre);
+  }
+
+  // Update or create reasoning section in a card during streaming
+  function updateReasoningInCard(card, reasoningText) {
+    if (!card) return;
+    let section = card.querySelector('.reasoning-section');
+    if (!reasoningText) return;
+
+    if (!section) {
+      const pre = card.querySelector('pre');
+      if (!pre) return;
+      section = document.createElement('div');
+      section.className = 'reasoning-section';
+
+      const header = document.createElement('div');
+      header.className = 'reasoning-header';
+      header.innerHTML = '<span class="reasoning-icon">💭</span><span class="reasoning-label">思考中...</span><span class="reasoning-toggle">▼</span>';
+      header.addEventListener('click', () => {
+        section.classList.toggle('collapsed');
+        const toggle = header.querySelector('.reasoning-toggle');
+        toggle.textContent = section.classList.contains('collapsed') ? '▶' : '▼';
+      });
+
+      const content = document.createElement('pre');
+      content.className = 'reasoning-content';
+      content.textContent = reasoningText;
+
+      section.appendChild(header);
+      section.appendChild(content);
+      card.insertBefore(section, pre);
+    } else {
+      const content = section.querySelector('.reasoning-content');
+      if (content) content.textContent = reasoningText;
+    }
+  }
+
+  // Finalize reasoning section after streaming completes
+  function finalizeReasoningInCard(card, reasoningText) {
+    if (!card) return;
+    const section = card.querySelector('.reasoning-section');
+    if (!section) {
+      // No reasoning section was created during streaming, add one now
+      if (reasoningText) addReasoningToCard(card, reasoningText);
+      return;
+    }
+    // Update label and collapse
+    const label = section.querySelector('.reasoning-label');
+    if (label) label.textContent = '思考过程';
+    section.classList.add('collapsed');
+    const toggle = section.querySelector('.reasoning-toggle');
+    if (toggle) toggle.textContent = '▶';
+    // Update content if provided
+    if (reasoningText) {
+      const content = section.querySelector('.reasoning-content');
+      if (content) content.textContent = reasoningText;
+    }
   }
 
   // Dead code: fetchAndParse and ensureJsonOrThrow are defined but never called.
