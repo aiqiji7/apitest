@@ -75,6 +75,14 @@
         <h2>测试内容</h2>
         <p class="muted">在下方选择测试类型，编辑用户消息，然后发送请求。结果将按轮次与请求分块展示。</p>
 
+        <div class="stream-toggle-row">
+          <label class="stream-toggle-label">
+            <input type="checkbox" id="streamToggle" checked />
+            <span>流式响应</span>
+          </label>
+          <span class="stream-toggle-hint">关闭后工具调用场景使用非流式 JSON 响应</span>
+        </div>
+
         <div class="segmented" id="vendorType">
           <button class="seg-btn active" data-vendor="openai">OpenAI</button>
           <button class="seg-btn" data-vendor="anthropic">Anthropic</button>

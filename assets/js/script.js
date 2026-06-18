@@ -41,6 +41,7 @@
   const imageInfo = $('#imageInfo');
   const removeImageBtn = $('#removeImageBtn');
   const recentDropdown = $('#recentDropdown');
+  const streamToggleEl = $('#streamToggle');
 
   // Image state
   let currentImageData = null; // base64 data URL or external URL string
@@ -113,6 +114,10 @@
     const root = stripTrailingSlash(base);
     return `${root}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   }
+  function buildGeminiStreamEndpoint(base, model, apiKey) {
+    const root = stripTrailingSlash(base);
+    return `${root}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
+  }
   function buildAnthropicEndpoint(base) {
     const root = stripTrailingSlash(base);
     return `${root}/v1/messages`;
@@ -170,9 +175,10 @@
   }
 
   // Copy helper
-  function attachCopy(btn, targetPre) {
+  function attachCopy(btn, target) {
     btn.addEventListener('click', () => {
-      navigator.clipboard.writeText(targetPre.textContent || '');
+      const text = typeof target === 'function' ? target() : (target && target.textContent) || '';
+      navigator.clipboard.writeText(text);
       const orig = btn.textContent;
       btn.textContent = '已复制';
       setTimeout(() => btn.textContent = orig, 1500);
@@ -405,9 +411,21 @@
   }
 
   // UI builders
-  function addBlock(title, payload, durationMs) {
+  function formatPayloadForBlock(payload) {
+    return typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+  }
+
+  function addBlock(title, payload, durationMs, options) {
     const wrap = document.createElement('div');
-    wrap.className = 'code-block';
+    wrap.className = 'code-block collapsed';
+
+    // Toggle button
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'toggle-btn';
+    toggleBtn.innerHTML = '&#9654;';
+    toggleBtn.setAttribute('aria-label', '展开/折叠');
+    toggleBtn.title = '展开/折叠';
+
     const h = document.createElement('div');
     h.className = 'title';
     // 如果有耗时，在标题后面追加
@@ -420,12 +438,59 @@
     copy.className = 'copy-btn';
     copy.textContent = '复制';
     const pre = document.createElement('pre');
-    pre.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
-    wrap.appendChild(h); wrap.appendChild(copy); wrap.appendChild(pre);
+    const payloadText = formatPayloadForBlock(payload);
+    pre.textContent = payloadText;
+    wrap.appendChild(toggleBtn); wrap.appendChild(h); wrap.appendChild(copy);
+    if (options && options.headers) {
+      const displayHeaders = normalizeHeadersForDisplay(options.headers);
+      const headersText = JSON.stringify(displayHeaders, null, 2);
+      const headersLabel = document.createElement('div');
+      headersLabel.className = 'code-section-label';
+      const labelText = document.createElement('span');
+      labelText.textContent = '请求头';
+      headersLabel.appendChild(labelText);
+      const limitationNote = document.createElement('span');
+      limitationNote.className = 'header-limitation-note';
+      limitationNote.textContent = '仅显示显式设置的请求头';
+      limitationNote.title = '浏览器 fetch() 自动添加的请求头（如 Host、Connection 等）无法通过 JS 捕获';
+      headersLabel.appendChild(limitationNote);
+      const headersPre = document.createElement('pre');
+      headersPre.textContent = headersText;
+      const bodyLabel = document.createElement('div');
+      bodyLabel.className = 'code-section-label';
+      bodyLabel.textContent = '请求体';
+      wrap.appendChild(headersLabel); wrap.appendChild(headersPre); wrap.appendChild(bodyLabel); wrap.appendChild(pre);
+      attachCopy(copy, () => `请求头\n${headersText}\n\n请求体\n${payloadText || ''}`);
+    } else {
+      wrap.appendChild(pre);
+      attachCopy(copy, pre);
+    }
+
+    // Toggle collapse on title click or toggle button click
+    const toggleCollapse = () => {
+      wrap.classList.toggle('collapsed');
+      if (wrap.classList.contains('collapsed')) {
+        toggleBtn.innerHTML = '&#9654;';
+        toggleBtn.setAttribute('aria-expanded', 'false');
+      } else {
+        toggleBtn.innerHTML = '&#9660;';
+        toggleBtn.setAttribute('aria-expanded', 'true');
+      }
+    };
+    toggleBtn.addEventListener('click', toggleCollapse);
+    h.addEventListener('click', toggleCollapse);
+    h.style.cursor = 'pointer';
+
+    // Initial collapsed state: set aria-expanded
+    toggleBtn.setAttribute('aria-expanded', 'false');
+
     blocksContainer.appendChild(wrap);
-    attachCopy(copy, pre);
     updateClearBtnState();
     return wrap;
+  }
+
+  function addRequestBlock(title, payload, headers) {
+    return addBlock(title, payload, undefined, { headers });
   }
 
   // 格式化耗时
@@ -690,23 +755,51 @@
     updateClearBtnState();
   });
 
+  const IQ_TESTS = {
+    iq_test_1: {
+      label: '模型智商测试题 1',
+      expectedAnswer: '5',
+      expectedDuration: '约 2+ 分钟',
+      prompt: String.raw`首先我想请你回答一道困难的计算题。设实数列{x_n}满足：x_0=0，x_2=\sqrt[3]{2}x_1，x_3 是正整数，且 x_{n+1} = \frac{1}{\sqrt[3]{4}} x_n + \sqrt[3]{4} x_{n-1} + \frac{1}{2} x_{n-2} (n \geq 2)。问：这类数列中最少有多少个整数项？计算出答案之后请使用JSON格式回答以下所有问题：上个计算题的答案是多少？告诉我你是什么AI模型，版本号多少，你的知识截止日期是什么时候，训练和发布你的公司是什么？`
+    },
+    iq_test_2: {
+      label: '模型智商测试题 2',
+      expectedAnswer: '21',
+      expectedDuration: '约 2 分钟',
+      prompt: String.raw`在一个黑色的袋子里放有三种口味的糖果，每种糖果有两种不同的形状（圆形和五角星形，不同的形状靠手感可以分辨）。现已知不同口味的糖和不同形状的数量统计如下表。参赛者需要在活动前决定摸出的糖果数目，那么，最少取出多少个糖果才能保证手中同时拥有不同形状的苹果味和桃子味的糖？（同时手中有圆形苹果味匹配五角星桃子味糖果，或者有圆形桃子味匹配五角星苹果味糖果都满足要求）
+
+苹果味	桃子味	西瓜味
+圆形	7	9	8
+五角星形	7	6	4`
+    }
+  };
+
+  const IQ_TEST_BUTTONS = Object.entries(IQ_TESTS).map(([scenario, test]) => ({
+    scenario,
+    label: test.label,
+    defaultInput: test.prompt
+  }));
+
   // 厂商分组配置
   const vendorTests = {
     openai: [
       { scenario: 'openai_tools', label: '工具调用 (Chat Completions)', defaultInput: 'RANDOM_CONVERT_TASK' },
       { scenario: 'responses_tools', label: '工具调用 (Responses)', defaultInput: 'RANDOM_CONVERT_TASK' },
       { scenario: 'responses_search', label: '搜索 (Responses)', defaultInput: '搜索当前最新的Gemini旗舰模型是？' },
-      { scenario: 'openai_image', label: '图片支持', defaultInput: '请描述这张图片' }
+      { scenario: 'openai_image', label: '图片支持', defaultInput: '请描述这张图片' },
+      ...IQ_TEST_BUTTONS
     ],
     anthropic: [
       { scenario: 'anthropic_tools', label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
-      { scenario: 'anthropic_image', label: '图片支持', defaultInput: '请描述这张图片' }
+      { scenario: 'anthropic_image', label: '图片支持', defaultInput: '请描述这张图片' },
+      ...IQ_TEST_BUTTONS
     ],
     google: [
       { scenario: 'gemini_tools', label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
       { scenario: 'gemini_search', label: '搜索', defaultInput: '搜索当前最新的Gemini旗舰模型是？' },
       { scenario: 'gemini_url_context', label: 'URL 上下文', defaultInput: '这个工具有哪些特点？https://ai.google.dev/gemini-api/docs/url-context' },
-      { scenario: 'gemini_image', label: '图片支持', defaultInput: '请描述这张图片' }
+      { scenario: 'gemini_image', label: '图片支持', defaultInput: '请描述这张图片' },
+      ...IQ_TEST_BUTTONS
     ]
   };
 
@@ -728,6 +821,14 @@
 
   // 当前选中的厂商
   let currentVendor = 'openai';
+
+  // 当前活跃的测试场景
+  let currentActiveScenario = null;
+
+  // 是否启用流式响应
+  function isStreamEnabled() {
+    return !streamToggleEl || streamToggleEl.checked;
+  }
 
   // 图片场景列表
   const IMAGE_SCENARIOS = ['openai_image', 'anthropic_image', 'gemini_image'];
@@ -774,6 +875,127 @@
       const hint = label ? label.querySelector('.label-hint') : null;
       if (hint) hint.remove();
     }
+  }
+
+  function isIqTestScenario(scenario) {
+    return Object.prototype.hasOwnProperty.call(IQ_TESTS, scenario);
+  }
+
+  function addIqTestReference(test, durationMs) {
+    addInlineInfo(`${test.label} 对比参考：正确答案：${test.expectedAnswer}；参考思考时间：${test.expectedDuration}；本次响应耗时：${formatDuration(durationMs)}。未自动判分，请手动对比模型输出。`);
+  }
+
+  async function sendStandardTextRequestForVendor({ vendor, apiKey, model, userText, endpoint, anthropicEndpoint, geminiStreamEndpoint, geminiEndpoint, signal }) {
+    let requestBody, requestHeaders, url;
+    let userMessagePayload;
+
+    if (vendor === 'anthropic') {
+      requestBody = {
+        model,
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: userText }],
+        stream: isStreamEnabled()
+      };
+      requestHeaders = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' };
+      url = anthropicEndpoint;
+      userMessagePayload = requestBody.messages[0];
+    } else if (vendor === 'google') {
+      requestBody = {
+        contents: [{ role: 'user', parts: [{ text: userText }] }],
+        stream: isStreamEnabled()
+      };
+      requestHeaders = { 'Content-Type': 'application/json' };
+      url = isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint;
+      userMessagePayload = requestBody.contents[0];
+    } else {
+      requestBody = {
+        model,
+        messages: [{ role: 'user', content: userText }],
+        stream: isStreamEnabled()
+      };
+      requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+      url = endpoint;
+      userMessagePayload = requestBody.messages[0];
+    }
+
+    addRequestBlock('请求 #1', requestBody, requestHeaders);
+    addMessage('user', '用户消息', userMessagePayload);
+
+    const start = Date.now();
+    let assistantCard = null;
+    let accumulatedText = '';
+    let streamedChunks = 0;
+
+    const updateAssistantMessage = (chunkText, fullText) => {
+      accumulatedText = fullText;
+      if (!assistantCard) {
+        assistantCard = addMessage('assistant', '回答（流式）', fullText);
+      } else {
+        const pre = assistantCard.querySelector('pre');
+        if (pre) pre.textContent = fullText;
+      }
+      streamedChunks++;
+    };
+
+    let result;
+    try {
+      result = await fetchAndStream(url, {
+        method: 'POST',
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+        signal
+      }, updateAssistantMessage);
+    } catch (err) {
+      if (err && err.name === 'AbortError') throw err;
+      // Enhance error for IQ test timeout situations
+      if (err && (err.name === 'FetchNetworkError' || err.name === 'TypeError') && isIqTestScenario(currentActiveScenario)) {
+        const iqErr = new TypeError('IQ 测试请求失败');
+        iqErr.name = 'FetchNetworkError';
+        iqErr.url = url;
+        iqErr.method = 'POST';
+        iqErr.details = '可能原因：IQ 测试 prompt 较长导致请求被拦截、API 超时、或后端限流。建议使用流式传输或增加超时时间。';
+        throw iqErr;
+      }
+      throw err;
+    }
+
+    const duration = Date.now() - start;
+
+    // Build response block: show full JSON if non-streamed, otherwise show text summary
+    if (result.isStreamed) {
+      const summary = { streamed: true, chunks: streamedChunks, content: accumulatedText };
+      addBlock('响应 #1', summary, duration);
+
+      // Update assistant message label to remove streaming indicator
+      if (assistantCard) {
+        const labelEl = assistantCard.querySelector('.label');
+        if (labelEl) {
+          labelEl.textContent = '· 回答';
+        }
+      }
+    } else if (result.json) {
+      addBlock('响应 #1', result.json, duration);
+      // Non-streamed: extract content from JSON response
+      if (vendor === 'anthropic') {
+        if (result.json.content && result.json.content.length > 0) {
+          addMessage('assistant', '回答', result.json.content);
+        }
+      } else if (vendor === 'google') {
+        const candidate = result.json.candidates && result.json.candidates[0];
+        if (candidate && candidate.content) {
+          addMessage('assistant', '回答', candidate.content);
+        }
+      } else {
+        const choice = result.json.choices && result.json.choices[0];
+        if (choice && choice.message) {
+          addMessage('assistant', '回答', choice.message);
+        }
+      }
+    } else {
+      addBlock('响应 #1', { text: result.text }, duration);
+    }
+
+    return duration;
   }
 
   // 清理图片输入
@@ -883,6 +1105,41 @@
     safeUrl = safeUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/)([^/@\s:]+(?::[^/@\s]*)?@)/i, '$1***@');
     safeUrl = safeUrl.replace(/([?&#;](?:api[_-]?key|key|token|access_token|authorization|secret|password|cookie)=)[^&#;\s]+/gi, '$1***');
     return sanitizeSensitiveText(safeUrl);
+  }
+
+  function isSensitiveHeaderName(name) {
+    return /(^|[-_])(api[-_]?key|key|token|access[-_]?token|authorization|auth|secret|password|cookie)([-_]|$)/i.test(String(name || ''));
+  }
+
+  function maskHeaderValue(name, value) {
+    const text = Array.isArray(value) ? value.join(', ') : String(value == null ? '' : value);
+    if (isSensitiveHeaderName(name)) {
+      return /^\s*Bearer\s+/i.test(text) ? text.replace(/^(\s*Bearer\s+).+$/i, '$1***') : '***';
+    }
+    return sanitizeSensitiveText(text);
+  }
+
+  function normalizeHeadersForDisplay(headers) {
+    const displayHeaders = {};
+    if (!headers) return displayHeaders;
+
+    if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+      headers.forEach((value, name) => { displayHeaders[name] = maskHeaderValue(name, value); });
+      return displayHeaders;
+    }
+
+    if (Array.isArray(headers)) {
+      headers.forEach(item => {
+        if (!Array.isArray(item) || item.length < 2) return;
+        displayHeaders[String(item[0])] = maskHeaderValue(item[0], item[1]);
+      });
+      return displayHeaders;
+    }
+
+    Object.entries(headers).forEach(([name, value]) => {
+      displayHeaders[name] = maskHeaderValue(name, value);
+    });
+    return displayHeaders;
   }
 
   function parseJsonSafely(text) {
@@ -1382,8 +1639,10 @@
     const signal = currentAbortController.signal;
 
     const scenario = testTypeWrap.querySelector('.seg-btn.active')?.dataset.scenario || 'openai_tools';
+    currentActiveScenario = scenario;
     const endpoint = buildEndpoint(apiUrl);
     const geminiEndpoint = buildGeminiEndpoint(apiUrl, model, apiKey);
+    const geminiStreamEndpoint = buildGeminiStreamEndpoint(apiUrl, model, apiKey);
     const anthropicEndpoint = buildAnthropicEndpoint(apiUrl);
 
     try {
@@ -1404,7 +1663,22 @@
         throw new Error('ABORT_SILENT');
       }
 
-      if (scenario === 'openai_tools') {
+      if (isIqTestScenario(scenario)) {
+        const test = IQ_TESTS[scenario];
+        const duration = await sendStandardTextRequestForVendor({
+          vendor: currentVendor,
+          apiKey,
+          model,
+          userText,
+          endpoint,
+          anthropicEndpoint,
+          geminiStreamEndpoint,
+          geminiEndpoint,
+          signal
+        });
+        addIqTestReference(test, duration);
+      }
+      else if (scenario === 'openai_tools') {
         const tools = [
           {
             type: 'function',
@@ -1451,19 +1725,90 @@
 
         const MAX_TURNS = 8;
         while (turn <= MAX_TURNS) {
-          const requestBody = { model, messages, tools, tool_choice: 'auto' };
-          addBlock(`请求 #${turn}`, requestBody);
+          const requestBody = { model, messages, tools, tool_choice: 'auto', stream: isStreamEnabled() };
+          const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+          addRequestBlock(`请求 #${turn}`, requestBody, requestHeaders);
 
           const tStart = Date.now();
-          const r = await fetchAndParse(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-            body: JSON.stringify(requestBody),
-            signal
-          });
-          const data = ensureJsonOrThrow(r);
-          const duration = Date.now() - tStart;
-          addBlock(`响应 #${turn}`, data, duration);
+          let accText = '';
+          let assistantCard = null;
+          let data = null;
+          let isStreamed = false;
+          try {
+            const result = await fetchAndStream(endpoint, {
+              method: 'POST',
+              headers: requestHeaders,
+              body: JSON.stringify(requestBody),
+              signal
+            }, (chunkText, fullText) => {
+              accText = fullText;
+              if (!assistantCard) {
+                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
+              } else {
+                const preEl = assistantCard.querySelector('pre');
+                if (preEl) preEl.textContent = fullText;
+              }
+            });
+            if (result.isStreamed) {
+              isStreamed = true;
+              addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - tStart);
+              if (result.toolCalls && result.toolCalls.length > 0) {
+                // Build assistant message from accumulated streaming tool calls
+                const assistantMsg = { role: 'assistant', content: accText || null, tool_calls: result.toolCalls };
+                messages.push(assistantMsg);
+                addMessage('assistant', `模型响应 #${turn}`, assistantMsg);
+                // Process tool calls — same logic as non-streaming path
+                for (const toolCall of result.toolCalls) {
+                  let toolResults = { error: 'Unknown function' };
+                  if (toolCall.function.name === 'convert_base') {
+                    try {
+                      const args = JSON.parse(toolCall.function.arguments || '{}');
+                      const val = parseInt(args.number, args.from_base);
+                      toolResults = isNaN(val) ? { error: 'Invalid input' } : { result: val.toString(args.to_base) };
+                    } catch (e) { toolResults = { error: e.message }; }
+                  } else if (toolCall.function.name === 'submit_answer') {
+                    hasSubmittedAnswer = true;
+                    try {
+                      const args = JSON.parse(toolCall.function.arguments || '{}');
+                      const isCorrect = String(args.answer).toUpperCase() === activeExpectedAnswer;
+                      validationStatus = isCorrect;
+                      toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
+                      if (isCorrect) {
+                        validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                      } else {
+                        validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                      }
+                    } catch (e) { toolResults = { error: e.message }; }
+                  }
+                  const toolMessage = {
+                    role: 'tool',
+                    content: JSON.stringify(toolResults),
+                    tool_call_id: toolCall.id
+                  };
+                  messages.push(toolMessage);
+                  addMessage('tool', `工具执行 #${turn}`, toolResults);
+                }
+                turn++;
+                continue; // continue the tool-call loop
+              } else {
+                if (!hasSubmittedAnswer) {
+                  addInlineInfo('收到流式文本响应，模型未调用工具，流程结束。');
+                }
+                break;
+              }
+            } else if (result.json) {
+              data = result.json;
+              addBlock(`响应 #${turn}`, data, Date.now() - tStart);
+            } else {
+              break;
+            }
+          } catch (streamErr) {
+            if (streamErr && streamErr.name === 'AbortError') throw streamErr;
+            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
+            break;
+          }
+          if (isStreamed) break; // streamed without tool calls — already broke above
+          if (!data) break;
 
           const choice = data.choices && data.choices[0];
           if (!choice) break;
@@ -1557,19 +1902,99 @@
             max_tokens: 1024,
             messages,
             tools,
-            system: A_SYSTEM_INSTRUCTION
+            system: A_SYSTEM_INSTRUCTION,
+            stream: isStreamEnabled()
           };
-          addBlock(`请求 #${turn}`, aReq);
+          const requestHeaders = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' };
+          addRequestBlock(`请求 #${turn}`, aReq, requestHeaders);
           const aTStart = Date.now();
-          const aR = await fetchAndParse(anthropicEndpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-            body: JSON.stringify(aReq),
-            signal
-          });
-          const aData = ensureJsonOrThrow(aR);
-          const aTDuration = Date.now() - aTStart;
-          addBlock(`响应 #${turn}`, aData, aTDuration);
+          let accText = '';
+          let assistantCard = null;
+          let aData = null;
+          let isStreamed = false;
+          try {
+            const result = await fetchAndStream(anthropicEndpoint, {
+              method: 'POST',
+              headers: requestHeaders,
+              body: JSON.stringify(aReq),
+              signal
+            }, (chunkText, fullText) => {
+              accText = fullText;
+              if (!assistantCard) {
+                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
+              } else {
+                const preEl = assistantCard.querySelector('pre');
+                if (preEl) preEl.textContent = fullText;
+              }
+            });
+            if (result.isStreamed) {
+              isStreamed = true;
+              addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - aTStart);
+              if (result.toolCalls && result.toolCalls.length > 0) {
+                // Build content array from accumulated streaming tool calls
+                const contentArr = [];
+                if (accText) contentArr.push({ type: 'text', text: accText });
+                for (const tc of result.toolCalls) {
+                  contentArr.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
+                }
+                messages.push({ role: 'assistant', content: contentArr });
+                addMessage('assistant', `模型响应 #${turn}`, contentArr);
+                // Process tool uses — same logic as non-streaming path
+                const toolUses = contentArr.filter(p => p && p.type === 'tool_use');
+                if (toolUses.length > 0) {
+                  const toolResultsParts = [];
+                  for (const toolUse of toolUses) {
+                    let toolResults = { error: 'Unknown function' };
+                    if (toolUse.name === 'convert_base') {
+                      try {
+                        const args = toolUse.input || {};
+                        const val = parseInt(args.number, args.from_base);
+                        toolResults = isNaN(val) ? { error: 'Invalid input' } : { result: val.toString(args.to_base) };
+                      } catch (e) { toolResults = { error: e.message }; }
+                    } else if (toolUse.name === 'submit_answer') {
+                      hasSubmittedAnswer = true;
+                      try {
+                        const args = toolUse.input || {};
+                        const isCorrect = String(args.answer).toUpperCase() === activeExpectedAnswer;
+                        validationStatus = isCorrect;
+                        toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
+                        if (isCorrect) {
+                          validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                        } else {
+                          validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                        }
+                      } catch (e) { toolResults = { error: e.message }; }
+                    }
+                    toolResultsParts.push({
+                      type: 'tool_result',
+                      tool_use_id: toolUse.id,
+                      content: JSON.stringify(toolResults)
+                    });
+                    addMessage('tool', `工具执行 #${turn}`, toolResults);
+                  }
+                  messages.push({ role: 'user', content: toolResultsParts });
+                  turn++;
+                  continue; // continue the tool-call loop
+                }
+              } else {
+                if (!hasSubmittedAnswer) {
+                  addInlineInfo('收到流式文本响应，模型未调用工具，流程结束。');
+                }
+                break;
+              }
+            } else if (result.json) {
+              aData = result.json;
+              addBlock(`响应 #${turn}`, aData, Date.now() - aTStart);
+            } else {
+              break;
+            }
+          } catch (streamErr) {
+            if (streamErr && streamErr.name === 'AbortError') throw streamErr;
+            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
+            break;
+          }
+          if (isStreamed) break; // streamed without tool calls — already broke above
+          if (!aData) break;
 
           const contentArr = Array.isArray(aData && aData.content) ? aData.content : [];
           messages.push({ role: 'assistant', content: contentArr });
@@ -1660,15 +2085,91 @@
             systemInstruction: { parts: [{ text: '你是一个有帮助的助手。你不仅能够调用 convert_base 工具，还必须在得到最终计算结果后调用 submit_answer 工具来提交最终答案。' }] },
             tools: [{ functionDeclarations }],
             toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
-            contents
+            contents,
+            stream: isStreamEnabled()
           };
-          addBlock(`请求 #${turn}`, gReq);
+          const requestHeaders = { 'Content-Type': 'application/json' };
+          addRequestBlock(`请求 #${turn}`, gReq, requestHeaders);
 
           const gTStart = Date.now();
-          const gR = await fetchAndParse(geminiEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(gReq), signal });
-          const gData = ensureJsonOrThrow(gR);
-          const gTDuration = Date.now() - gTStart;
-          addBlock(`响应 #${turn}`, gData, gTDuration);
+          let accText = '';
+          let assistantCard = null;
+          let gData = null;
+          let isStreamed = false;
+          try {
+            const result = await fetchAndStream(isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint, { method: 'POST', headers: requestHeaders, body: JSON.stringify(gReq), signal }, (chunkText, fullText) => {
+              accText = fullText;
+              if (!assistantCard) {
+                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
+              } else {
+                const preEl = assistantCard.querySelector('pre');
+                if (preEl) preEl.textContent = fullText;
+              }
+            });
+            if (result.isStreamed) {
+              isStreamed = true;
+              addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - gTStart);
+              if (result.toolCalls && result.toolCalls.length > 0) {
+                // Build model content from accumulated streaming function calls
+                const parts = [];
+                if (accText) parts.push({ text: accText });
+                for (const tc of result.toolCalls) {
+                  parts.push({ functionCall: { name: tc.name, args: tc.args, id: tc.id } });
+                }
+                const gContent = { role: 'model', parts };
+                contents.push(gContent);
+                addMessage('assistant', `模型响应 #${turn}`, gContent);
+                // Process function calls — same logic as non-streaming path
+                const responseParts = [];
+                for (const tc of result.toolCalls) {
+                  let toolResults = { error: 'Unknown function' };
+                  if (tc.name === 'convert_base') {
+                    try {
+                      const args = tc.args || {};
+                      const val = parseInt(args.number, args.from_base);
+                      toolResults = isNaN(val) ? { error: 'Invalid input' } : { result: val.toString(args.to_base) };
+                    } catch (e) { toolResults = { error: e.message }; }
+                  } else if (tc.name === 'submit_answer') {
+                    hasSubmittedAnswer = true;
+                    try {
+                      const args = tc.args || {};
+                      const isCorrect = String(args.answer).toUpperCase() === activeExpectedAnswer;
+                      validationStatus = isCorrect;
+                      toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
+                      if (isCorrect) {
+                        validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                      } else {
+                        validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                      }
+                    } catch (e) { toolResults = { error: e.message }; }
+                  }
+                  responseParts.push({
+                    functionResponse: { name: tc.name, response: toolResults }
+                  });
+                  addMessage('tool', `工具执行 #${turn}`, toolResults);
+                }
+                contents.push({ role: 'function', parts: responseParts });
+                turn++;
+                continue; // continue the tool-call loop
+              } else {
+                if (!hasSubmittedAnswer) {
+                  addInlineInfo('收到流式文本响应，模型未调用工具，流程结束。');
+                }
+                break;
+              }
+            } else if (result.json) {
+              gData = result.json;
+              addBlock(`响应 #${turn}`, gData, Date.now() - gTStart);
+            } else {
+              break;
+            }
+          } catch (streamErr) {
+            if (streamErr && streamErr.name === 'AbortError') throw streamErr;
+            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
+            break;
+          }
+          if (isStreamed) break; // streamed without tool calls — already broke above
+          if (!gData) break;
 
           const cand = gData.candidates && gData.candidates[0];
           const gContent = cand && cand.content;
@@ -1764,19 +2265,110 @@
 
         const MAX_TURNS = 8;
         while (turn <= MAX_TURNS) {
-          const rtReq = { model, tools, input: history, instructions: '你不仅能够调用 convert_base 工具，还必须在得到最终计算结果后调用 submit_answer 工具来提交最终答案。' };
-          addBlock(`请求 #${turn}`, rtReq);
+          const rtReq = { model, tools, input: history, instructions: '你不仅能够调用 convert_base 工具，还必须在得到最终计算结果后调用 submit_answer 工具来提交最终答案。', stream: isStreamEnabled() };
+          const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+          addRequestBlock(`请求 #${turn}`, rtReq, requestHeaders);
 
           const rtTStart = Date.now();
-          const rtR = await fetchAndParse(responsesEndpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-            body: JSON.stringify(rtReq),
-            signal
-          });
-          const rtData = ensureJsonOrThrow(rtR);
-          const rtTDuration = Date.now() - rtTStart;
-          addBlock(`响应 #${turn}`, rtData, rtTDuration);
+          let accText = '';
+          let assistantCard = null;
+          let rtData = null;
+          let isStreamed = false;
+          try {
+            const result = await fetchAndStream(responsesEndpoint, {
+              method: 'POST',
+              headers: requestHeaders,
+              body: JSON.stringify(rtReq),
+              signal
+            }, (chunkText, fullText) => {
+              accText = fullText;
+              if (!assistantCard) {
+                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
+              } else {
+                const preEl = assistantCard.querySelector('pre');
+                if (preEl) preEl.textContent = fullText;
+              }
+            });
+            if (result.isStreamed) {
+              isStreamed = true;
+              addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - rtTStart);
+              if (result.toolCalls && result.toolCalls.length > 0) {
+                // Build outputs from accumulated streaming function calls
+                const outputs = [];
+                if (accText) {
+                  outputs.push({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: accText }] });
+                }
+                for (const fc of result.toolCalls) {
+                  outputs.push({
+                    type: 'function_call',
+                    id: fc.id,
+                    name: fc.name,
+                    call_id: fc.call_id,
+                    arguments: fc.arguments
+                  });
+                }
+                history.push(...outputs);
+                // Display assistant message
+                if (accText) {
+                  addMessage('assistant', `模型响应 #${turn}`, { text: accText });
+                } else {
+                  addMessage('assistant', `模型响应 #${turn}`, outputs);
+                }
+                // Process function calls — same logic as non-streaming path
+                const fcs = outputs.filter(item => item && item.type === 'function_call');
+                if (fcs.length > 0) {
+                  for (const fc of fcs) {
+                    let toolResults = { error: 'Unknown function' };
+                    if (fc.name === 'convert_base') {
+                      try {
+                        const args = JSON.parse(fc.arguments || '{}');
+                        const val = parseInt(args.number, args.from_base);
+                        toolResults = isNaN(val) ? { error: 'Invalid input' } : { result: val.toString(args.to_base) };
+                      } catch (e) { toolResults = { error: e.message }; }
+                    } else if (fc.name === 'submit_answer') {
+                      hasSubmittedAnswer = true;
+                      try {
+                        const args = JSON.parse(fc.arguments || '{}');
+                        const isCorrect = String(args.answer).toUpperCase() === activeExpectedAnswer;
+                        validationStatus = isCorrect;
+                        toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
+                        if (isCorrect) {
+                          validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                        } else {
+                          validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                        }
+                      } catch (e) { toolResults = { error: e.message }; }
+                    }
+                    const outputItem = {
+                      type: 'function_call_output',
+                      call_id: fc.call_id,
+                      output: JSON.stringify(toolResults)
+                    };
+                    history.push(outputItem);
+                    addMessage('tool', `工具执行 #${turn}`, toolResults);
+                  }
+                  turn++;
+                  continue; // continue the tool-call loop
+                }
+              } else {
+                if (!hasSubmittedAnswer) {
+                  addInlineInfo('收到流式文本响应，模型未调用工具，流程结束。');
+                }
+                break;
+              }
+            } else if (result.json) {
+              rtData = result.json;
+              addBlock(`响应 #${turn}`, rtData, Date.now() - rtTStart);
+            } else {
+              break;
+            }
+          } catch (streamErr) {
+            if (streamErr && streamErr.name === 'AbortError') throw streamErr;
+            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
+            break;
+          }
+          if (isStreamed) break; // streamed without tool calls — already broke above
+          if (!rtData) break;
 
           const outputs = Array.isArray(rtData.output) ? rtData.output : [];
           history.push(...outputs);
@@ -1835,68 +2427,127 @@
         else if (!hasSubmittedAnswer) addInlineInfo('模型未执行最终的答案提交工具，流程提前结束。');
       }
       else if (scenario === 'responses_search') {
-        // OpenAI Responses API with web_search tool 
+        // OpenAI Responses API with web_search tool (streaming)
         const responsesEndpoint = buildResponsesEndpoint(apiUrl);
         const rReq = {
           model,
           tools: [{ type: 'web_search' }],
-          input: [{ role: 'user', content: userText || '搜索当前最新的Gemini旗舰模型是？' }]
+          input: [{ role: 'user', content: userText || '搜索当前最新的Gemini旗舰模型是？' }],
+          stream: isStreamEnabled()
         };
-        addBlock('请求 #1', rReq);
+        const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+        addRequestBlock('请求 #1', rReq, requestHeaders);
         addMessage('user', '用户消息', rReq.input[0]);
         const rTStart = Date.now();
-        const rR = await fetchAndParse(responsesEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-          body: JSON.stringify(rReq),
-          signal
-        });
-        const rData = ensureJsonOrThrow(rR);
-        const rTDuration = Date.now() - rTStart;
-        addBlock('响应 #1', rData, rTDuration);
-
-        // 检测是否存在 web_search_call
-        const output = rData.output;
+        let accText = '';
+        let assistantCard = null;
+        let rData = null;
         let hasWebSearchCall = false;
-        if (Array.isArray(output)) {
-          hasWebSearchCall = output.some(item => item && item.type === 'web_search_call');
-        }
+        let streamErr = null;
+        try {
+          const result = await fetchAndStream(responsesEndpoint, {
+            method: 'POST',
+            headers: requestHeaders,
+            body: JSON.stringify(rReq),
+            signal
+          }, (chunkText, fullText) => {
+            accText = fullText;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', fullText);
+            } else {
+              const preEl = assistantCard.querySelector('pre');
+              if (preEl) preEl.textContent = fullText;
+            }
+          });
+          if (result.isStreamed) {
+            addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - rTStart);
+            addInlineInfo('已收到流式响应，请手动检查搜索结果。');
+          } else if (result.json) {
+            rData = result.json;
+            addBlock('响应 #1', rData, Date.now() - rTStart);
 
-        // 显示回答内容
-        if (rData.output_text) {
-          addMessage('assistant', '回答', { text: rData.output_text });
-        } else if (Array.isArray(output)) {
-          const msgItem = output.find(item => item && item.type === 'message');
-          if (msgItem && msgItem.content) {
-            addMessage('assistant', '回答', msgItem.content);
+            // 检测是否存在 web_search_call
+            const output = rData.output;
+            if (Array.isArray(output)) {
+              hasWebSearchCall = output.some(item => item && item.type === 'web_search_call');
+            }
+
+            // 显示回答内容
+            if (rData.output_text) {
+              addMessage('assistant', '回答', { text: rData.output_text });
+            } else if (Array.isArray(output)) {
+              const msgItem = output.find(item => item && item.type === 'message');
+              if (msgItem && msgItem.content) {
+                addMessage('assistant', '回答', msgItem.content);
+              }
+            }
+
+            // 未触发搜索工具调用的提示放在响应下面
+            if (!hasWebSearchCall) {
+              addInlineInfo('未触发搜索工具调用：模型可能未理解指令，或 API 异常。');
+            } else {
+              addInlineSuccess('模型成功进行了搜索工具调用，但回答中仍可能含有事实性错误');
+            }
           }
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          streamErr = err;
+          addBlock('响应 #1', { error: sanitizeSensitiveText(err.message || String(err)) }, 0);
         }
 
-        // 未触发搜索工具调用的提示放在响应下面
-        if (!hasWebSearchCall) {
-          addInlineInfo('未触发搜索工具调用：模型可能未理解指令，或 API 异常。');
-        } else {
-          addInlineSuccess('模型成功进行了搜索工具调用，但回答中仍可能含有事实性错误');
+        if (streamErr) {
+          // Error already displayed above; skip follow-up check
+        } else if (rData === null && accText) {
+          // Streamed response: can't verify web_search_call from text stream
+          // Info already shown above
         }
       }
       else if (scenario === 'gemini_search') {
         const gReq = {
           tools: [{ googleSearch: {} }],
-          contents: [{ role: 'user', parts: [{ text: userText || '搜索当前最新的Gemini旗舰模型是？' }] }]
+          contents: [{ role: 'user', parts: [{ text: userText || '搜索当前最新的Gemini旗舰模型是？' }] }],
+          stream: isStreamEnabled()
         };
-        addBlock('请求 #1', gReq);
+        const requestHeaders = { 'Content-Type': 'application/json' };
+        addRequestBlock('请求 #1', gReq, requestHeaders);
         addMessage('user', '用户消息', gReq.contents[0]);
         const gsTStart = Date.now();
-        const gR = await fetchAndParse(geminiEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(gReq), signal });
-        const gData = ensureJsonOrThrow(gR);
-        const gsTDuration = Date.now() - gsTStart;
-        addBlock('响应 #1', gData, gsTDuration);
-        const cand = gData.candidates && gData.candidates[0];
-        if (cand && cand.content) { addMessage('assistant', '回答', cand.content); }
+        let accText = '';
+        let assistantCard = null;
+        let gData = null;
+        let hasGroundingMetadata = false;
+        let streamErr = null;
+        try {
+          const result = await fetchAndStream(isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint, { method: 'POST', headers: requestHeaders, body: JSON.stringify(gReq), signal }, (chunkText, fullText) => {
+            accText = fullText;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', fullText);
+            } else {
+              const preEl = assistantCard.querySelector('pre');
+              if (preEl) preEl.textContent = fullText;
+            }
+          });
+          if (result.isStreamed) {
+            addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - gsTStart);
+          } else if (result.json) {
+            gData = result.json;
+            addBlock('响应 #1', gData, Date.now() - gsTStart);
+            const cand = gData.candidates && gData.candidates[0];
+            if (cand && cand.content) { addMessage('assistant', '回答', cand.content); }
+            hasGroundingMetadata = cand && cand.groundingMetadata;
+          }
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          streamErr = err;
+          addBlock('响应 #1', { error: sanitizeSensitiveText(err.message || String(err)) }, 0);
+        }
 
-        // 检测是否存在 groundingMetadata
-        const hasGroundingMetadata = cand && cand.groundingMetadata;
-        if (!hasGroundingMetadata) {
+        if (streamErr) {
+          // Error already displayed above; skip follow-up check
+        } else if (gData === null && accText) {
+          // Streamed response: can't verify grounding metadata from text stream
+          addInlineInfo('已收到流式响应，请手动检查搜索结果。');
+        } else if (!hasGroundingMetadata) {
           addInlineInfo('未触发搜索工具调用：模型可能未理解指令，或 API 异常。');
         } else {
           addInlineSuccess('模型成功进行了搜索工具调用，但回答中仍可能含有事实性错误');
@@ -1905,55 +2556,104 @@
       else if (scenario === 'gemini_url_context') {
         const gReq = {
           tools: [{ urlContext: {} }],
-          contents: [{ role: 'user', parts: [{ text: userText || '这个工具有哪些特点？https://ai.google.dev/gemini-api/docs/url-context' }] }]
+          contents: [{ role: 'user', parts: [{ text: userText || '这个工具有哪些特点？https://ai.google.dev/gemini-api/docs/url-context' }] }],
+          stream: isStreamEnabled()
         };
-        addBlock('请求 #1', gReq);
+        const requestHeaders = { 'Content-Type': 'application/json' };
+        addRequestBlock('请求 #1', gReq, requestHeaders);
         addMessage('user', '用户消息', gReq.contents[0]);
         const guTStart = Date.now();
-        const gR = await fetchAndParse(geminiEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(gReq), signal });
-        const gData = ensureJsonOrThrow(gR);
-        const guTDuration = Date.now() - guTStart;
-        addBlock('响应 #1', gData, guTDuration);
-        const cand = gData.candidates && gData.candidates[0];
-        if (cand && cand.content) { addMessage('assistant', '回答', cand.content); }
+        let accText = '';
+        let assistantCard = null;
+        let gData = null;
+        let hasGroundingMetadata = false;
+        let streamErr = null;
+        try {
+          const result = await fetchAndStream(isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint, { method: 'POST', headers: requestHeaders, body: JSON.stringify(gReq), signal }, (chunkText, fullText) => {
+            accText = fullText;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', fullText);
+            } else {
+              const preEl = assistantCard.querySelector('pre');
+              if (preEl) preEl.textContent = fullText;
+            }
+          });
+          if (result.isStreamed) {
+            addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - guTStart);
+          } else if (result.json) {
+            gData = result.json;
+            addBlock('响应 #1', gData, Date.now() - guTStart);
+            const cand = gData.candidates && gData.candidates[0];
+            if (cand && cand.content) { addMessage('assistant', '回答', cand.content); }
+            hasGroundingMetadata = cand && cand.groundingMetadata;
+          }
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          streamErr = err;
+          addBlock('响应 #1', { error: sanitizeSensitiveText(err.message || String(err)) }, 0);
+        }
 
-        // 检测是否存在 groundingMetadata
-        const hasGroundingMetadata = cand && cand.groundingMetadata;
-        if (!hasGroundingMetadata) {
+        if (streamErr) {
+          // Error already displayed above; skip follow-up check
+        } else if (gData === null && accText) {
+          // Streamed response: can't verify grounding metadata from text stream
+          addInlineInfo('已收到流式响应，请手动检查 URL 上下文结果。');
+        } else if (!hasGroundingMetadata) {
           addInlineInfo('未触发 URL 上下文工具调用：模型可能未理解指令，或 API 异常。');
         } else {
           addInlineSuccess('模型成功进行了搜索工具调用，但回答中仍可能含有事实性错误');
         }
       }
       else if (scenario === 'openai_image') {
-        // OpenAI Chat Completions 图片支持测试（单轮）
+        // OpenAI Chat Completions 图片支持测试（单轮，流式）
         const contentParts = [
           { type: 'text', text: userText },
           { type: 'image_url', image_url: { url: currentImageData } }
         ];
-        const oReq = { model, messages: [{ role: 'user', content: contentParts }] };
-        addBlock('请求 #1', oReq);
+        const oReq = { model, messages: [{ role: 'user', content: contentParts }], stream: isStreamEnabled() };
+        const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+        addRequestBlock('请求 #1', oReq, requestHeaders);
         addMessage('user', '用户消息', contentParts);
         const oTStart = Date.now();
-        const oR = await fetchAndParse(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-          body: JSON.stringify(oReq),
-          signal
-        });
-        const oData = ensureJsonOrThrow(oR);
-        const oTDuration = Date.now() - oTStart;
-        addBlock('响应 #1', oData, oTDuration);
-        const choice = oData.choices && oData.choices[0];
-        if (choice && choice.message) {
-          addMessage('assistant', '回答', choice.message);
-          addInlineSuccess('图片已成功被模型识别并处理');
-        } else {
-          addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+        let accText = '';
+        let assistantCard = null;
+        let oData = null;
+        try {
+          const result = await fetchAndStream(endpoint, {
+            method: 'POST',
+            headers: requestHeaders,
+            body: JSON.stringify(oReq),
+            signal
+          }, (chunkText, fullText) => {
+            accText = fullText;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', fullText);
+            } else {
+              const preEl = assistantCard.querySelector('pre');
+              if (preEl) preEl.textContent = fullText;
+            }
+          });
+          if (result.isStreamed) {
+            addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - oTStart);
+            addInlineSuccess('图片已成功被模型识别并处理');
+          } else if (result.json) {
+            oData = result.json;
+            addBlock('响应 #1', oData, Date.now() - oTStart);
+            const choice = oData.choices && oData.choices[0];
+            if (choice && choice.message) {
+              addMessage('assistant', '回答', choice.message);
+              addInlineSuccess('图片已成功被模型识别并处理');
+            } else {
+              addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+            }
+          }
+        } catch (streamErr) {
+          if (streamErr && streamErr.name === 'AbortError') throw streamErr;
+          addBlock('响应 #1', { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
         }
       }
       else if (scenario === 'anthropic_image') {
-        // Anthropic 图片支持测试（单轮）
+        // Anthropic 图片支持测试（单轮，流式）
         let source;
         if (currentImageData.startsWith('data:')) {
           const matches = currentImageData.match(/^data:(image\/\w+);base64,(.+)$/);
@@ -1974,29 +2674,50 @@
               { type: 'text', text: userText },
               { type: 'image', source }
             ]
-          }]
+          }],
+          stream: isStreamEnabled()
         };
-        addBlock('请求 #1', aReq);
+        const requestHeaders = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' };
+        addRequestBlock('请求 #1', aReq, requestHeaders);
         addMessage('user', '用户消息', aReq.messages[0].content);
         const aTStart = Date.now();
-        const aR = await fetchAndParse(anthropicEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-          body: JSON.stringify(aReq),
-          signal
-        });
-        const aData = ensureJsonOrThrow(aR);
-        const aTDuration = Date.now() - aTStart;
-        addBlock('响应 #1', aData, aTDuration);
-        if (aData.content && aData.content.length > 0) {
-          addMessage('assistant', '回答', aData.content);
-          addInlineSuccess('图片已成功被模型识别并处理');
-        } else {
-          addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+        let accText = '';
+        let assistantCard = null;
+        try {
+          const result = await fetchAndStream(anthropicEndpoint, {
+            method: 'POST',
+            headers: requestHeaders,
+            body: JSON.stringify(aReq),
+            signal
+          }, (chunkText, fullText) => {
+            accText = fullText;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', fullText);
+            } else {
+              const preEl = assistantCard.querySelector('pre');
+              if (preEl) preEl.textContent = fullText;
+            }
+          });
+          if (result.isStreamed) {
+            addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - aTStart);
+            addInlineSuccess('图片已成功被模型识别并处理');
+          } else if (result.json) {
+            const aData = result.json;
+            addBlock('响应 #1', aData, Date.now() - aTStart);
+            if (aData.content && aData.content.length > 0) {
+              addMessage('assistant', '回答', aData.content);
+              addInlineSuccess('图片已成功被模型识别并处理');
+            } else {
+              addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+            }
+          }
+        } catch (streamErr) {
+          if (streamErr && streamErr.name === 'AbortError') throw streamErr;
+          addBlock('响应 #1', { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
         }
       }
       else if (scenario === 'gemini_image') {
-        // Google Gemini 图片支持测试（单轮）
+        // Google Gemini 图片支持测试（单轮，流式）
         let imagePart;
         if (currentImageData.startsWith('data:')) {
           const matches = currentImageData.match(/^data:(image\/\w+);base64,(.+)$/);
@@ -2015,26 +2736,47 @@
               { text: userText },
               imagePart
             ]
-          }]
+          }],
+          stream: isStreamEnabled()
         };
-        addBlock('请求 #1', gReq);
+        const requestHeaders = { 'Content-Type': 'application/json' };
+        addRequestBlock('请求 #1', gReq, requestHeaders);
         addMessage('user', '用户消息', gReq.contents[0]);
         const gTStart = Date.now();
-        const gR = await fetchAndParse(geminiEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(gReq),
-          signal
-        });
-        const gData = ensureJsonOrThrow(gR);
-        const gTDuration = Date.now() - gTStart;
-        addBlock('响应 #1', gData, gTDuration);
-        const cand = gData.candidates && gData.candidates[0];
-        if (cand && cand.content) {
-          addMessage('assistant', '回答', cand.content);
-          addInlineSuccess('图片已成功被模型识别并处理');
-        } else {
-          addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+        let accText = '';
+        let assistantCard = null;
+        try {
+          const result = await fetchAndStream(isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint, {
+            method: 'POST',
+            headers: requestHeaders,
+            body: JSON.stringify(gReq),
+            signal
+          }, (chunkText, fullText) => {
+            accText = fullText;
+            if (!assistantCard) {
+              assistantCard = addMessage('assistant', '回答（流式）', fullText);
+            } else {
+              const preEl = assistantCard.querySelector('pre');
+              if (preEl) preEl.textContent = fullText;
+            }
+          });
+          if (result.isStreamed) {
+            addBlock('响应 #1', { streamed: true, content: accText }, Date.now() - gTStart);
+            addInlineSuccess('图片已成功被模型识别并处理');
+          } else if (result.json) {
+            const gData = result.json;
+            addBlock('响应 #1', gData, Date.now() - gTStart);
+            const cand = gData.candidates && gData.candidates[0];
+            if (cand && cand.content) {
+              addMessage('assistant', '回答', cand.content);
+              addInlineSuccess('图片已成功被模型识别并处理');
+            } else {
+              addInlineError('模型未能处理图片，该 API 可能不支持图片输入');
+            }
+          }
+        } catch (streamErr) {
+          if (streamErr && streamErr.name === 'AbortError') throw streamErr;
+          addBlock('响应 #1', { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
         }
       }
 
@@ -2052,6 +2794,9 @@
       if (err && err.name === 'FetchNetworkError') {
         const info = formatNetworkModelError(err.url, err.method);
         addInlineError(info.title, { rawText: info.details.join('\n'), contentType: 'text/plain' });
+        if (err.details) {
+          addInlineInfo(err.details);
+        }
         return;
       }
       addInlineError(`错误：${err && (err.message || err)}`, { rawText: sanitizeSensitiveText(err && err.rawText), contentType: err && err.contentType });
@@ -2064,6 +2809,241 @@
   });
 
   // ---- network helpers ----
+  async function fetchAndStream(url, options, onChunk) {
+    let res;
+    try {
+      res = await fetch(url, options);
+    } catch (err) {
+      if (err && err.name === 'AbortError') throw err;
+      throw createNetworkFetchError(url, options);
+    }
+
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const e = new Error(`HTTP ${res.status}`);
+      e.status = res.status;
+      e.statusText = res.statusText;
+      e.rawText = text;
+      e.contentType = contentType;
+      e.url = url;
+      e.method = getFetchMethod(options);
+      throw e;
+    }
+
+    const isSse = contentType.includes('text/event-stream');
+    if (!isSse || !res.body) {
+      // Fallback: non-streaming response
+      const text = await res.text().catch(() => {
+        throw createNetworkFetchError(url, options);
+      });
+      let json; try { json = JSON.parse(text); } catch { }
+      return { json, text, contentType, isStreamed: false };
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let buffer = '';
+    let finalData = null;
+
+    // Tool call accumulators (provider-native formats)
+    const openaiToolCalls = new Map();   // index -> { id, name, arguments }
+    const anthropicToolCalls = new Map(); // index -> { id, name, jsonBuf }
+    const geminiToolCalls = [];           // array of { name, args, id? }
+    const responsesToolCalls = new Map(); // output_index -> { id, name, call_id, arguments }
+    let currentEventType = '';            // track Anthropic/Responses SSE event types
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+
+          // Track SSE event type for Anthropic and Responses API
+          if (trimmed.startsWith('event:')) {
+            currentEventType = trimmed.slice(6).trim();
+            continue;
+          }
+
+          let dataLine = trimmed;
+          if (dataLine.startsWith('data:')) {
+            dataLine = dataLine.slice(5).trim();
+          }
+
+          if (dataLine === '[DONE]') continue;
+
+          try {
+            const chunk = JSON.parse(dataLine);
+            let chunkText = '';
+
+            // OpenAI Chat Completions: choices[0].delta.content
+            if (chunk.choices && chunk.choices[0]) {
+              const delta = chunk.choices[0].delta;
+              if (delta && delta.content) {
+                chunkText = delta.content;
+              }
+              // OpenAI Chat Completions: tool_calls accumulation
+              if (delta && delta.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                  const idx = tc.index;
+                  if (!openaiToolCalls.has(idx)) {
+                    openaiToolCalls.set(idx, { id: undefined, name: undefined, arguments: '' });
+                  }
+                  const existing = openaiToolCalls.get(idx);
+                  if (tc.id) existing.id = tc.id;
+                  if (tc.function && tc.function.name) existing.name = tc.function.name;
+                  if (tc.function && tc.function.arguments) existing.arguments += tc.function.arguments;
+                }
+              }
+            }
+
+            // Anthropic Messages: content_block_delta (delta.type === 'text_delta')
+            if (!chunkText && chunk.delta && chunk.delta.text) {
+              chunkText = chunk.delta.text;
+            }
+
+            // Anthropic Messages: tool_use accumulation
+            if (chunk.type === 'content_block_start' && chunk.content_block && chunk.content_block.type === 'tool_use') {
+              const idx = chunk.index;
+              anthropicToolCalls.set(idx, {
+                id: chunk.content_block.id,
+                name: chunk.content_block.name,
+                jsonBuf: ''
+              });
+            }
+            if (chunk.type === 'content_block_delta' && chunk.delta && chunk.delta.type === 'input_json_delta') {
+              const existing = anthropicToolCalls.get(chunk.index);
+              if (existing) {
+                existing.jsonBuf += chunk.delta.partial_json;
+              }
+            }
+
+            // Gemini: candidates[0].content.parts text extraction
+            if (!chunkText && chunk.candidates && chunk.candidates[0] &&
+                chunk.candidates[0].content && chunk.candidates[0].content.parts) {
+              const parts = chunk.candidates[0].content.parts;
+              // Extract text from the first text part (Gemini sends incremental text chunks)
+              for (const part of parts) {
+                if (part.text) {
+                  chunkText = part.text;
+                  break;
+                }
+              }
+              // Gemini: functionCall accumulation (complete objects, not deltas)
+              // Gemini sends complete response objects per chunk, so functionCalls may repeat across chunks.
+              // Deduplicate by name+args identity.
+              for (const part of parts) {
+                if (part.functionCall) {
+                  const fc = part.functionCall;
+                  const isDuplicate = geminiToolCalls.some(existing =>
+                    existing.name === fc.name && JSON.stringify(existing.args) === JSON.stringify(fc.args)
+                  );
+                  if (!isDuplicate) {
+                    geminiToolCalls.push({
+                      name: fc.name,
+                      args: fc.args,
+                      id: fc.id
+                    });
+                  }
+                }
+              }
+            }
+
+            // OpenAI Responses API: text delta extraction
+            if (!chunkText && chunk.type === 'response.output_text.delta' && typeof chunk.delta === 'string') {
+              chunkText = chunk.delta;
+            }
+
+            // OpenAI Responses API: function_call accumulation
+            if (chunk.type === 'response.output_item.added' && chunk.item && chunk.item.type === 'function_call') {
+              responsesToolCalls.set(chunk.output_index, {
+                id: chunk.item.id,
+                name: chunk.item.name,
+                call_id: chunk.item.call_id,
+                arguments: ''
+              });
+            } else if (chunk.type === 'response.function_call_arguments.delta') {
+              const existing = responsesToolCalls.get(chunk.output_index);
+              if (existing) existing.arguments += chunk.delta;
+            } else if (chunk.type === 'response.function_call_arguments.done') {
+              const existing = responsesToolCalls.get(chunk.output_index);
+              if (existing) existing.arguments = chunk.arguments;
+            }
+
+            if (chunkText) {
+              fullText += chunkText;
+              if (onChunk) onChunk(chunkText, fullText);
+            }
+
+            // Store the last non-empty chunk for potential final data
+            finalData = chunk;
+          } catch { /* skip unparseable lines */ }
+        }
+      }
+    } finally {
+      // Ensure we release the reader on abort
+      try { reader.releaseLock(); } catch { }
+    }
+
+    fullText += decoder.decode();
+
+    // Build toolCalls result in provider-native format
+    let toolCalls = null;
+
+    // OpenAI Chat Completions tool calls
+    if (openaiToolCalls.size > 0) {
+      toolCalls = Array.from(openaiToolCalls.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([, tc]) => ({
+          id: tc.id,
+          type: 'function',
+          function: { name: tc.name, arguments: tc.arguments }
+        }));
+    }
+
+    // Anthropic tool calls (take precedence if present)
+    if (anthropicToolCalls.size > 0) {
+      toolCalls = Array.from(anthropicToolCalls.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([, tc]) => {
+          let input = {};
+          try { input = JSON.parse(tc.jsonBuf); } catch { }
+          return { type: 'tool_use', id: tc.id, name: tc.name, input };
+        });
+    }
+
+    // Gemini function calls (take precedence if present)
+    if (geminiToolCalls.length > 0) {
+      toolCalls = geminiToolCalls;
+    }
+
+    // Responses API function calls (take precedence if present)
+    if (responsesToolCalls.size > 0) {
+      toolCalls = Array.from(responsesToolCalls.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([, tc]) => ({
+          type: 'function_call',
+          id: tc.id,
+          name: tc.name,
+          call_id: tc.call_id,
+          arguments: tc.arguments
+        }));
+    }
+
+    return { json: null, text: fullText, contentType, isStreamed: true, toolCalls };
+  }
+
+  // Dead code: fetchAndParse and ensureJsonOrThrow are defined but never called.
+  // All scenarios use fetchAndStream. Do NOT reintroduce fetchAndParse calls.
   async function fetchAndParse(url, options) {
     let res;
     try {
