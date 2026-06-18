@@ -3033,6 +3033,10 @@
         }
         return;
       }
+      if (err && err.name === 'TimeoutError') {
+        addInlineError(`请求超时`, { rawText: `${err.message}\n建议：检查 API 服务是否正常响应，或尝试增加超时时间。`, contentType: 'text/plain' });
+        return;
+      }
       addInlineError(`错误：${err && (err.message || err)}`, { rawText: sanitizeSensitiveText(err && err.rawText), contentType: err && err.contentType });
     } finally {
       requestPending = false;
@@ -3044,14 +3048,63 @@
   });
 
   // ---- network helpers ----
+  const CONNECT_TIMEOUT_MS = 120_000;  // 连接超时 120s
+  const READ_TIMEOUT_MS    = 120_000;  // 流式读取超时 120s（无数据到达则断开）
+
   async function fetchAndStream(url, options, onChunk, onPhase, onReasoningChunk) {
+    // Chain external signal with a timeout signal
+    const externalSignal = options && options.signal;
+    const timeoutController = new AbortController();
+    let combinedSignal;
+    if (externalSignal) {
+      if (typeof AbortSignal.any === 'function') {
+        combinedSignal = AbortSignal.any([externalSignal, timeoutController.signal]);
+      } else {
+        // Fallback: listen to external signal and propagate to timeout controller
+        combinedSignal = timeoutController.signal;
+        if (externalSignal.aborted) {
+          timeoutController.abort();
+        } else {
+          externalSignal.addEventListener('abort', () => timeoutController.abort(), { once: true });
+        }
+      }
+    } else {
+      combinedSignal = timeoutController.signal;
+    }
+
+    // Connection timeout: abort if no response headers within CONNECT_TIMEOUT_MS
+    let connectTimer = setTimeout(() => {
+      timeoutController.abort();
+    }, CONNECT_TIMEOUT_MS);
+
+    // Helper: create a timeout error with context
+    function createTimeoutError(phase) {
+      const err = new TypeError(`请求超时（${phase}）`);
+      err.name = 'TimeoutError';
+      err.url = url;
+      err.method = getFetchMethod(options);
+      return err;
+    }
+
+    const fetchOptions = Object.assign({}, options, { signal: combinedSignal });
+
     let res;
     try {
-      res = await fetch(url, options);
+      res = await fetch(url, fetchOptions);
     } catch (err) {
-      if (err && err.name === 'AbortError') throw err;
+      clearTimeout(connectTimer);
+      if (err && err.name === 'AbortError') {
+        // Distinguish timeout abort from user abort
+        if (timeoutController.signal.aborted && !(externalSignal && externalSignal.aborted)) {
+          throw createTimeoutError('连接');
+        }
+        throw err;
+      }
       throw createNetworkFetchError(url, options);
     }
+
+    // Connection succeeded — clear connection timer
+    clearTimeout(connectTimer);
 
     const contentType = (res.headers.get('content-type') || '').toLowerCase();
 
@@ -3106,10 +3159,16 @@
     let currentEventType = '';            // track Anthropic/Responses SSE event types
     let anthropicInThinkingBlock = false;  // track Anthropic thinking content block
 
+    // Read timeout: reset on each chunk, abort if no data for READ_TIMEOUT_MS
+    let readTimer = setTimeout(() => { timeoutController.abort(); }, READ_TIMEOUT_MS);
+
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) { clearTimeout(readTimer); break; }
+        // Data received — reset read timeout
+        clearTimeout(readTimer);
+        readTimer = setTimeout(() => { timeoutController.abort(); }, READ_TIMEOUT_MS);
         buffer += decoder.decode(value, { stream: true });
 
         const lines = buffer.split('\n');
@@ -3309,8 +3368,13 @@
         }
       }
     } finally {
+      clearTimeout(readTimer);
       // Ensure we release the reader on abort
       try { reader.releaseLock(); } catch { }
+      // If timeout triggered during read, throw timeout error instead of AbortError
+      if (timeoutController.signal.aborted && !(externalSignal && externalSignal.aborted)) {
+        throw createTimeoutError('流式读取');
+      }
     }
 
     // Phase 4: processing response (stream complete)
