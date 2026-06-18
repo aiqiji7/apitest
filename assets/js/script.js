@@ -799,7 +799,7 @@
     const proto = openaiProtocol; // 'chat_completions' 或 'responses'
     const toolsScenario = proto === 'responses' ? 'responses_tools' : 'openai_tools';
     const searchScenario = 'responses_search'; // 搜索仅 Responses API 支持
-    const imageLabel = proto === 'responses' ? '图片支持 (Responses)' : '图片支持';
+    const imageLabel = '图片支持';
     const tests = [
       { scenario: toolsScenario, label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
     ];
