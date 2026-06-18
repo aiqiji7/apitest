@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Streaming contract and fetchAndStream patterns to verify against when reviewing Responses API integration"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Quality standards to check code changes against"}
+{"file": ".trellis/tasks/06-19-openai-responses-image-iq/research/responses-api-image-format.md", "reason": "Reference for verifying correct Responses API image format usage"}
