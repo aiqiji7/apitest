@@ -986,7 +986,10 @@
         assistantCard = addMessage('assistant', '回答（流式）', fullText);
       } else {
         const pre = assistantCard.querySelector('pre');
-        if (pre) pre.textContent = fullText;
+        if (pre) {
+          pre.textContent = fullText;
+          pre.scrollTop = pre.scrollHeight;
+        }
       }
       streamedChunks++;
     };
