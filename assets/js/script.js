@@ -3039,6 +3039,7 @@
       hideWaiting();
       testBtn.disabled = false; testBtn.textContent = '发送测试请求';
       updateClearBtnState();
+      scrollLatestIntoView();
     }
   });
 
