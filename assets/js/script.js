@@ -203,8 +203,17 @@
       d.className = 'dot';
       dots.appendChild(d);
     }
+    const abortBtn = document.createElement('button');
+    abortBtn.className = 'waiting-abort-btn';
+    abortBtn.textContent = '中止';
+    abortBtn.title = '中止当前请求';
+    abortBtn.addEventListener('click', () => {
+      abortCurrentRequest();
+      addInlineInfo('请求已中止');
+    });
     wrap.appendChild(label);
     wrap.appendChild(dots);
+    wrap.appendChild(abortBtn);
     waitingEl = wrap;
     return waitingEl;
   }
