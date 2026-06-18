@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend spec index for verification scope."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify sensitive values are masked and rendered safely."}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Verify fetch metadata display preserves secret-safety constraints."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Verify UI remains consistent with existing component patterns."}

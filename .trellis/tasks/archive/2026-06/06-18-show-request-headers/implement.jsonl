@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend spec index and pre-development checklist for this UI change."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Sensitive data masking and safe UI rendering requirements."}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Fetch display and secret-safety guidance relevant to request metadata."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"UI component consistency guidance for request/response blocks."}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"Frontend file organization context for the plain JS app."}
