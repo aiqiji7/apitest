@@ -512,6 +512,8 @@ body {
     font-size: 13px;
     line-height: 1.6;
     color: #0b2542;
+    max-height: 200px;
+    overflow-y: auto;
     background: #f8fbff;
     border: 1px solid #e5f1ff;
     border-radius: 8px;
