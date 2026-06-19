@@ -22,9 +22,41 @@ Questions to answer:
 
 ## Forbidden Patterns
 
-<!-- Patterns that should never be used and why -->
+### Don't: Create duplicate message cards in streaming+tool-call paths
 
-(To be filled by the team)
+**Problem**:
+```js
+// During streaming: creates card A
+assistantCard = addMessage('assistant', '回答（流式）', fullText);
+// After streaming ends: creates card B (duplicate!)
+addMessage('assistant', '模型响应 #1', assistantMsg);
+```
+
+**Why it's bad**: Users see two assistant cards for the same turn — a truncated streaming card and a final structured card. The streaming card shows partial text that looks like a broken, incomplete message.
+
+**Instead**:
+```js
+// During streaming: creates card A
+assistantCard = addMessage('assistant', '回答（流式）', fullText);
+// After streaming ends: UPDATE card A, don't create card B
+updateMessageCard(assistantCard, '模型响应 #1', assistantMsg);
+```
+
+### Don't: Use CSS `:empty` / `::after` on streaming content containers
+
+**Problem**:
+```css
+pre.answer-content:empty {
+  border: 2px dashed red;
+}
+pre.answer-content:empty::after {
+  content: '（模型未输出正式回答）';
+}
+```
+
+**Why it's bad**: During streaming, if reasoning/thinking content arrives before text content, the `<pre>` element is briefly empty. The `:empty` pseudo-class triggers a flash of red border + placeholder text that disappears the instant text content arrives, causing visual flicker.
+
+**Instead**: Handle empty-state display in JS after streaming completes (e.g., check `accumulatedText` and set `pre.textContent` explicitly). Use `min-height` on the base rule to prevent layout collapse when empty.
 
 ---
 
