@@ -3257,6 +3257,9 @@
     let inCdataBlock = false;               // track CDATA-wrapped thinking in content (e.g., GLM)
     let cdataBuffer = '';                   // accumulate CDATA content across streaming chunks
     let cdataOpenBuffer = '';               // buffer for partial <![CDATA[ opening tag split across chunks
+    let inThinkBlock = false;               // track  thinking\n... XML-tag thinking in content (e.g., DeepSeek)
+    let thinkBuffer = '';                   // accumulate thinking content across streaming chunks
+    let thinkOpenBuffer = '';               // buffer for partial  thinking\n opening tag split across chunks
 
     // Read timeout: reset on each chunk, abort if no data for READ_TIMEOUT_MS
     let readTimer = setTimeout(() => { timeoutController.abort(); }, READ_TIMEOUT_MS);
@@ -3530,6 +3533,82 @@
               }
             }
 
+            // XML-tag thinking blocks embedded in content (e.g., DeepSeek)
+            // Format:  thinking\n...thinking text...\n response\nactual answer...
+            // The  thinking\n opening tag may be split across chunks.
+            if (chunkText) {
+              // Prepend any buffered partial  thinking\n opening tag from previous chunk
+              if (thinkOpenBuffer) {
+                chunkText = thinkOpenBuffer + chunkText;
+                thinkOpenBuffer = '';
+              }
+
+              if (inThinkBlock) {
+                // Already inside a thinking block — accumulate
+                thinkBuffer += chunkText;
+                const endMarker = '\n response\n';
+                const endIdx = thinkBuffer.indexOf(endMarker);
+                if (endIdx !== -1) {
+                  // End marker found — extract reasoning content
+                  const thinkContent = thinkBuffer.substring(0, endIdx);
+                  reasoningText += thinkContent;
+                  if (onReasoningChunk) onReasoningChunk(thinkContent, reasoningText);
+                  if (!hasReceivedReasoning) {
+                    hasReceivedReasoning = true;
+                    if (!firstChunkReceived && onPhase) onPhase('receiving_data');
+                  }
+                  // Any remaining text after \n response\n is normal content
+                  const remaining = thinkBuffer.substring(endIdx + endMarker.length);
+                  inThinkBlock = false;
+                  thinkBuffer = '';
+                  chunkText = remaining || '';
+                } else {
+                  // End marker not yet found — keep accumulating, don't output
+                  chunkText = '';
+                }
+              } else if (chunkText.includes(' thinking\n')) {
+                // Start of a thinking block detected
+                const openIdx = chunkText.indexOf(' thinking\n');
+                // Any text before the opening tag is normal content
+                const beforeThink = chunkText.substring(0, openIdx);
+                const afterOpen = chunkText.substring(openIdx + ' thinking\n'.length);
+                thinkBuffer = afterOpen;
+                inThinkBlock = true;
+                const endMarker = '\n response\n';
+                const endIdx = thinkBuffer.indexOf(endMarker);
+                if (endIdx !== -1) {
+                  // End marker found in same chunk
+                  const thinkContent = thinkBuffer.substring(0, endIdx);
+                  reasoningText += thinkContent;
+                  if (onReasoningChunk) onReasoningChunk(thinkContent, reasoningText);
+                  if (!hasReceivedReasoning) {
+                    hasReceivedReasoning = true;
+                    if (!firstChunkReceived && onPhase) onPhase('receiving_data');
+                  }
+                  const remaining = thinkBuffer.substring(endIdx + endMarker.length);
+                  inThinkBlock = false;
+                  thinkBuffer = '';
+                  // Combine before-think and after-think text
+                  chunkText = (beforeThink + remaining) || '';
+                } else {
+                  // End marker not yet found
+                  chunkText = beforeThink || '';
+                }
+              } else {
+                // No  thinking\n found in this chunk — but the end of chunkText
+                // might be a partial  thinking\n prefix. Check and buffer it.
+                const thinkOpen = ' thinking\n';
+                for (let i = 1; i < thinkOpen.length; i++) {
+                  const prefix = thinkOpen.substring(0, i);
+                  if (chunkText.endsWith(prefix)) {
+                    thinkOpenBuffer = prefix;
+                    chunkText = chunkText.substring(0, chunkText.length - i);
+                    break;
+                  }
+                }
+              }
+            }
+
             if (chunkText) {
               fullText += chunkText;
               if (onChunk) onChunk(chunkText, fullText);
@@ -3564,6 +3643,22 @@
         fullText += cdataOpenBuffer;
         if (onChunk) onChunk(cdataOpenBuffer, fullText);
         cdataOpenBuffer = '';
+      }
+      // Handle unclosed thinking block — treat buffered content as reasoning
+      if (inThinkBlock && thinkBuffer) {
+        reasoningText += thinkBuffer;
+        if (onReasoningChunk) onReasoningChunk(thinkBuffer, reasoningText);
+        if (!hasReceivedReasoning) {
+          hasReceivedReasoning = true;
+        }
+        inThinkBlock = false;
+        thinkBuffer = '';
+      }
+      // Handle leftover partial  thinking\n opening tag — treat as normal content
+      if (thinkOpenBuffer) {
+        fullText += thinkOpenBuffer;
+        if (onChunk) onChunk(thinkOpenBuffer, fullText);
+        thinkOpenBuffer = '';
       }
       // If timeout triggered during read, throw timeout error instead of AbortError
       if (timeoutController.signal.aborted && !(externalSignal && externalSignal.aborted)) {
@@ -3700,6 +3795,46 @@
       }
       json.content = json.content.replace(cdataRegexGlobal, '').trim() || null;
       return allReasoning || null;
+    }
+
+    // XML-tag thinking blocks embedded in content field (e.g., DeepSeek)
+    // Format:  thinking\n...thinking text...\n response\nactual answer...
+    // Or without separator:  thinking\n...thinking text only...
+    const thinkTagStart = ' thinking\n';
+    const thinkTagEnd = '\n response\n';
+    if (json.choices && json.choices[0] && json.choices[0].message) {
+      const msg = json.choices[0].message;
+      if (typeof msg.content === 'string' && msg.content.startsWith(thinkTagStart)) {
+        const afterStart = msg.content.substring(thinkTagStart.length);
+        const endIdx = afterStart.indexOf(thinkTagEnd);
+        if (endIdx !== -1) {
+          // Has separator: split into reasoning and actual content
+          const reasoning = afterStart.substring(0, endIdx).trim();
+          const actualContent = afterStart.substring(endIdx + thinkTagEnd.length).trim();
+          msg.content = actualContent || null;
+          return reasoning || null;
+        } else {
+          // No separator: entire content after  thinking\n is reasoning
+          const reasoning = afterStart.trim();
+          msg.content = null;
+          return reasoning || null;
+        }
+      }
+    }
+    // Anthropic: content string with XML thinking tags
+    if (typeof json.content === 'string' && json.content.startsWith(thinkTagStart)) {
+      const afterStart = json.content.substring(thinkTagStart.length);
+      const endIdx = afterStart.indexOf(thinkTagEnd);
+      if (endIdx !== -1) {
+        const reasoning = afterStart.substring(0, endIdx).trim();
+        const actualContent = afterStart.substring(endIdx + thinkTagEnd.length).trim();
+        json.content = actualContent || null;
+        return reasoning || null;
+      } else {
+        const reasoning = afterStart.trim();
+        json.content = null;
+        return reasoning || null;
+      }
     }
 
     return null;

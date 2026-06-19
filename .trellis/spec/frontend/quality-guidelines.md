@@ -106,6 +106,39 @@ function sanitizeSensitiveText(text) {
 > - **Unclosed CDATA**: If the stream ends with an unclosed CDATA block, treat buffered content as reasoning (graceful degradation)
 > - **Content after CDATA**: Text before/after CDATA blocks is still normal content and must be displayed
 
+### Gotcha: XML-tag thinking blocks (` thinking\n...`) in `content` string field
+
+> **Warning**: Some providers (e.g., DeepSeek via certain API proxies) embed thinking/reasoning content inside the `content` string field using XML-style tags ` thinking\n` and ` response\n`, instead of using dedicated `reasoning_content` fields.
+>
+> Example (thinking only, no response separator):
+> ```json
+> {
+>   "role": "assistant",
+>   "content": " thinking\n用户想要将二进制数转换为十六进制。我需要使用 convert_base 工具。",
+>   "tool_calls": [...]
+> }
+> ```
+>
+> Example (with ` response\n` separator):
+> ```json
+> {
+>   "role": "assistant",
+>   "content": " thinking\n转换完成了。结果是 f33abe。\n response\n转换完成！结果是 `f33abe`。",
+>   "tool_calls": [...]
+> }
+> ```
+>
+> **Format rules**:
+> - ` thinking\n` — marks the start of thinking content
+> - ` response\n` — marks the end of thinking and start of actual response (**optional**)
+> - When no ` response\n` is present, everything after ` thinking\n` to end of content is thinking
+>
+> The code must extract the thinking portion as reasoning text and strip it from the displayed content. Key edge cases:
+> - **Streaming**: ` thinking\n` opening tag may be split across SSE chunks — use a `thinkOpenBuffer` to buffer partial opening tags (same pattern as CDATA handling)
+> - **End marker detection**: In streaming, check each chunk for `\n response\n` to detect the transition from thinking to response content
+> - **Unclosed block**: If the stream ends while still inside a thinking block, treat buffered content as reasoning (graceful degradation)
+> - **Non-streaming**: Use `startsWith(' thinking\n')` to detect, then `indexOf('\n response\n')` to split — simpler than streaming since the full content is available
+
 ### Pattern: Reasoning content extraction priority
 
 When extracting reasoning/thinking content from API responses, check in this order:
@@ -116,6 +149,7 @@ When extracting reasoning/thinking content from API responses, check in this ord
 4. `output[].type === "reasoning"` items (Responses API)
 5. `candidates[].content.parts[].thought` (Gemini)
 6. `<![CDATA[...]]>` in `content` string (GLM and similar)
+7. ` thinking\n...` XML-tag blocks in `content` string (DeepSeek via certain proxies)
 
 ---
 
