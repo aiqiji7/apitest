@@ -3210,6 +3210,9 @@
     const responsesToolCalls = new Map(); // output_index -> { id, name, call_id, arguments }
     let currentEventType = '';            // track Anthropic/Responses SSE event types
     let anthropicInThinkingBlock = false;  // track Anthropic thinking content block
+    let inCdataBlock = false;               // track CDATA-wrapped thinking in content (e.g., GLM)
+    let cdataBuffer = '';                   // accumulate CDATA content across streaming chunks
+    let cdataOpenBuffer = '';               // buffer for partial <![CDATA[ opening tag split across chunks
 
     // Read timeout: reset on each chunk, abort if no data for READ_TIMEOUT_MS
     let readTimer = setTimeout(() => { timeoutController.abort(); }, READ_TIMEOUT_MS);
@@ -3404,6 +3407,85 @@
               if (existing) existing.arguments = chunk.arguments;
             }
 
+            // CDATA-wrapped thinking content handling (e.g., GLM)
+            // Some providers embed thinking content in delta.content wrapped in <![CDATA[...]]>
+            // The CDATA block may span multiple streaming chunks.
+            // The <![CDATA[ opening tag itself may be split across chunks.
+            if (chunkText) {
+              // Prepend any buffered partial CDATA opening tag from previous chunk
+              if (cdataOpenBuffer) {
+                chunkText = cdataOpenBuffer + chunkText;
+                cdataOpenBuffer = '';
+              }
+
+              if (inCdataBlock) {
+                // Already inside a CDATA block — accumulate
+                cdataBuffer += chunkText;
+                if (cdataBuffer.includes(']]>')) {
+                  // CDATA block closed — extract reasoning content
+                  const closeIdx = cdataBuffer.indexOf(']]>');
+                  const cdataContent = cdataBuffer.substring(0, closeIdx);
+                  reasoningText += cdataContent;
+                  if (onReasoningChunk) onReasoningChunk(cdataContent, reasoningText);
+                  if (!hasReceivedReasoning) {
+                    hasReceivedReasoning = true;
+                    if (!firstChunkReceived && onPhase) onPhase('receiving_data');
+                  }
+                  // Any remaining text after ]]> is normal content
+                  const remaining = cdataBuffer.substring(closeIdx + 3);
+                  inCdataBlock = false;
+                  cdataBuffer = '';
+                  if (remaining) {
+                    chunkText = remaining;
+                  } else {
+                    chunkText = '';
+                  }
+                } else {
+                  // CDATA block not yet closed — keep accumulating, don't output
+                  chunkText = '';
+                }
+              } else if (chunkText.includes('<![CDATA[')) {
+                // Start of a CDATA block detected
+                const openIdx = chunkText.indexOf('<![CDATA[');
+                // Any text before the CDATA opening tag is normal content
+                const beforeCdata = chunkText.substring(0, openIdx);
+                const afterOpen = chunkText.substring(openIdx + 9); // 9 = '<![CDATA['.length
+                cdataBuffer = afterOpen;
+                inCdataBlock = true;
+                if (cdataBuffer.includes(']]>')) {
+                  // CDATA block closes in the same chunk
+                  const closeIdx = cdataBuffer.indexOf(']]>');
+                  const cdataContent = cdataBuffer.substring(0, closeIdx);
+                  reasoningText += cdataContent;
+                  if (onReasoningChunk) onReasoningChunk(cdataContent, reasoningText);
+                  if (!hasReceivedReasoning) {
+                    hasReceivedReasoning = true;
+                    if (!firstChunkReceived && onPhase) onPhase('receiving_data');
+                  }
+                  const remaining = cdataBuffer.substring(closeIdx + 3);
+                  inCdataBlock = false;
+                  cdataBuffer = '';
+                  // Combine before-CDATA and after-CDATA text
+                  chunkText = (beforeCdata + remaining) || '';
+                } else {
+                  // CDATA block not yet closed
+                  chunkText = beforeCdata || '';
+                }
+              } else {
+                // No <![CDATA[ found in this chunk — but the end of chunkText
+                // might be a partial <![CDATA[ prefix. Check and buffer it.
+                const cdataOpen = '<![CDATA[';
+                for (let i = 1; i < cdataOpen.length; i++) {
+                  const prefix = cdataOpen.substring(0, i);
+                  if (chunkText.endsWith(prefix)) {
+                    cdataOpenBuffer = prefix;
+                    chunkText = chunkText.substring(0, chunkText.length - i);
+                    break;
+                  }
+                }
+              }
+            }
+
             if (chunkText) {
               fullText += chunkText;
               if (onChunk) onChunk(chunkText, fullText);
@@ -3423,6 +3505,22 @@
       clearTimeout(readTimer);
       // Ensure we release the reader on abort
       try { reader.releaseLock(); } catch { }
+      // Handle unclosed CDATA block — treat buffered content as reasoning
+      if (inCdataBlock && cdataBuffer) {
+        reasoningText += cdataBuffer;
+        if (onReasoningChunk) onReasoningChunk(cdataBuffer, reasoningText);
+        if (!hasReceivedReasoning) {
+          hasReceivedReasoning = true;
+        }
+        inCdataBlock = false;
+        cdataBuffer = '';
+      }
+      // Handle leftover partial CDATA opening tag — treat as normal content
+      if (cdataOpenBuffer) {
+        fullText += cdataOpenBuffer;
+        if (onChunk) onChunk(cdataOpenBuffer, fullText);
+        cdataOpenBuffer = '';
+      }
       // If timeout triggered during read, throw timeout error instead of AbortError
       if (timeoutController.signal.aborted && !(externalSignal && externalSignal.aborted)) {
         throw createTimeoutError('流式读取');
@@ -3525,6 +3623,39 @@
         }
       }
       if (thinking) return thinking;
+    }
+
+    // CDATA-wrapped thinking content in content field (e.g., GLM)
+    // Some providers return thinking content embedded in the content string wrapped in <![CDATA[...]]>
+    // We extract it as reasoning and strip it from the content so it doesn't appear in the answer area.
+    // Use global flag to handle multiple CDATA blocks (concatenate all as reasoning, strip all from content).
+    const cdataRegexGlobal = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
+    const cdataRegexSingle = /<!\[CDATA\[([\s\S]*?)\]\]>/;
+    if (json.choices && json.choices[0] && json.choices[0].message) {
+      const msg = json.choices[0].message;
+      if (typeof msg.content === 'string' && cdataRegexSingle.test(msg.content)) {
+        // Collect all CDATA blocks as reasoning
+        let allReasoning = '';
+        let m;
+        const regex2 = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
+        while ((m = regex2.exec(msg.content)) !== null) {
+          allReasoning += m[1].trim();
+        }
+        // Strip all CDATA blocks from content
+        msg.content = msg.content.replace(cdataRegexGlobal, '').trim() || null;
+        return allReasoning || null;
+      }
+    }
+    // Anthropic: content string with CDATA
+    if (typeof json.content === 'string' && cdataRegexSingle.test(json.content)) {
+      let allReasoning = '';
+      let m;
+      const regex2 = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
+      while ((m = regex2.exec(json.content)) !== null) {
+        allReasoning += m[1].trim();
+      }
+      json.content = json.content.replace(cdataRegexGlobal, '').trim() || null;
+      return allReasoning || null;
     }
 
     return null;
