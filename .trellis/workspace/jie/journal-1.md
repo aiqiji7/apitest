@@ -179,3 +179,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: 修复流式多轮工具调用重复消息卡片
+
+**Date**: 2026-06-19
+**Task**: 修复流式多轮工具调用重复消息卡片
+**Branch**: `main`
+
+### Summary
+
+流式模式下模型同时输出文本和工具调用时，临时流式卡片与最终结构化卡片重复出现。新增 updateMessageCard() 复用现有卡片，4 个 vendor 路径均已修复。额外移除 CSS :empty 闪烁问题，并将两条 forbidden pattern 记录到前端 spec。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ff9537a` | (see git log) |
+| `c0cdd12` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
