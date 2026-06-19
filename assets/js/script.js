@@ -846,14 +846,14 @@
     const bases = [2, 8, 10, 16];
     const baseNames = { 2: '二进制', 8: '八进制', 10: '十进制', 16: '十六进制' };
 
-    // 随机选择三个互不相同的进制
+    // 随机选择两个互不相同的进制
     let shuffled = [...bases].sort(() => 0.5 - Math.random());
-    const [b1, b2, b3] = shuffled;
+    const [fromBase, toBase] = shuffled;
 
-    const startNum = val.toString(b1).toUpperCase();
-    activeExpectedAnswer = val.toString(b3).toUpperCase();
+    const startNum = val.toString(fromBase).toUpperCase();
+    activeExpectedAnswer = val.toString(toBase).toUpperCase();
 
-    return `请将${baseNames[b1]}数 ${startNum} 转换为${baseNames[b2]}，然后再将该${baseNames[b2]}结果转换为${baseNames[b3]}。待转换完成后，你必须调用 submit_answer 工具提交最终的${baseNames[b3]}结果，系统将验证你的答案是否正确。`;
+    return `请将${baseNames[fromBase]}数 ${startNum} 转换为${baseNames[toBase]}。你可以使用 convert_base 工具完成转换，完成后调用 submit_answer 提交结果。`;
   }
 
   // 当前选中的厂商
@@ -1844,8 +1844,10 @@
         let hasSubmittedAnswer = false;
         let validationStatus = null; // null: not run, true: correct, false: error
         let validationMsg = '';
+        let apiError = false;
+        let apiErrorMsg = '';
 
-        const MAX_TURNS = 8;
+        const MAX_TURNS = 3;
         while (turn <= MAX_TURNS) {
           const requestBody = { model, messages, tools, tool_choice: 'auto', stream: isStreamEnabled() };
           const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
@@ -1907,9 +1909,9 @@
                       validationStatus = isCorrect;
                       toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
                       if (isCorrect) {
-                        validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                        validationMsg = '模型成功识别并完成了任务，且最终答案验证正确！';
                       } else {
-                        validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                        validationMsg = `模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
                       }
                     } catch (e) { toolResults = { error: e.message }; }
                   }
@@ -1937,7 +1939,9 @@
             }
           } catch (streamErr) {
             if (streamErr && streamErr.name === 'AbortError') throw streamErr;
-            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
+            apiError = true;
+            apiErrorMsg = streamErr.message || String(streamErr);
+            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(apiErrorMsg) }, 0);
             break;
           }
           if (isStreamed) break; // streamed without tool calls — already broke above
@@ -1967,9 +1971,9 @@
                   validationStatus = isCorrect;
                   toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
                   if (isCorrect) {
-                    validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                    validationMsg = '模型成功识别并完成了任务，且最终答案验证正确！';
                   } else {
-                    validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                    validationMsg = `模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
                   }
                 } catch (e) { toolResults = { error: e.message }; }
               }
@@ -1989,6 +1993,7 @@
 
         if (validationStatus === true) addInlineSuccess(validationMsg);
         else if (validationStatus === false) addInlineError(validationMsg);
+        else if (apiError) addInlineError(`API 请求失败，流程提前结束（${sanitizeSensitiveText(apiErrorMsg)}）。请检查 API URL、Key 和模型名称是否正确。`);
         else if (!hasSubmittedAnswer) addInlineInfo('模型未执行最终的答案提交工具，流程提前结束。');
       }
       else if (scenario === 'anthropic_tools') {
@@ -2026,10 +2031,12 @@
         let hasSubmittedAnswer = false;
         let validationStatus = null;
         let validationMsg = '';
+        let apiError = false;
+        let apiErrorMsg = '';
 
         const A_SYSTEM_INSTRUCTION = '你不仅能够调用 convert_base 工具，还必须在得到最终计算结果后调用 submit_answer 工具来提交最终答案。';
 
-        const MAX_TURNS = 8;
+        const MAX_TURNS = 3;
         while (turn <= MAX_TURNS) {
           const aReq = {
             model,
@@ -2104,9 +2111,9 @@
                         validationStatus = isCorrect;
                         toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
                         if (isCorrect) {
-                          validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                          validationMsg = '模型成功识别并完成了任务，且最终答案验证正确！';
                         } else {
-                          validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                          validationMsg = `模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
                         }
                       } catch (e) { toolResults = { error: e.message }; }
                     }
@@ -2135,7 +2142,9 @@
             }
           } catch (streamErr) {
             if (streamErr && streamErr.name === 'AbortError') throw streamErr;
-            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
+            apiError = true;
+            apiErrorMsg = streamErr.message || String(streamErr);
+            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(apiErrorMsg) }, 0);
             break;
           }
           if (isStreamed) break; // streamed without tool calls — already broke above
@@ -2165,9 +2174,9 @@
                   validationStatus = isCorrect;
                   toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
                   if (isCorrect) {
-                    validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                    validationMsg = '模型成功识别并完成了任务，且最终答案验证正确！';
                   } else {
-                    validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                    validationMsg = `模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
                   }
                 } catch (e) { toolResults = { error: e.message }; }
               }
@@ -2187,6 +2196,7 @@
 
         if (validationStatus === true) addInlineSuccess(validationMsg);
         else if (validationStatus === false) addInlineError(validationMsg);
+        else if (apiError) addInlineError(`API 请求失败，流程提前结束（${sanitizeSensitiveText(apiErrorMsg)}）。请检查 API URL、Key 和模型名称是否正确。`);
         else if (!hasSubmittedAnswer) addInlineInfo('模型未执行最终的答案提交工具，流程提前结束。');
       }
       else if (scenario === 'gemini_tools') {
@@ -2224,8 +2234,10 @@
         let hasSubmittedAnswer = false;
         let validationStatus = null;
         let validationMsg = '';
+        let apiError = false;
+        let apiErrorMsg = '';
 
-        const MAX_TURNS = 8;
+        const MAX_TURNS = 3;
         while (turn <= MAX_TURNS) {
           const gReq = {
             systemInstruction: { parts: [{ text: '你是一个有帮助的助手。你不仅能够调用 convert_base 工具，还必须在得到最终计算结果后调用 submit_answer 工具来提交最终答案。' }] },
@@ -2294,9 +2306,9 @@
                       validationStatus = isCorrect;
                       toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
                       if (isCorrect) {
-                        validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                        validationMsg = '模型成功识别并完成了任务，且最终答案验证正确！';
                       } else {
-                        validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                        validationMsg = `模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
                       }
                     } catch (e) { toolResults = { error: e.message }; }
                   }
@@ -2322,7 +2334,9 @@
             }
           } catch (streamErr) {
             if (streamErr && streamErr.name === 'AbortError') throw streamErr;
-            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
+            apiError = true;
+            apiErrorMsg = streamErr.message || String(streamErr);
+            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(apiErrorMsg) }, 0);
             break;
           }
           if (isStreamed) break; // streamed without tool calls — already broke above
@@ -2356,9 +2370,9 @@
                   validationStatus = isCorrect;
                   toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
                   if (isCorrect) {
-                    validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                    validationMsg = '模型成功识别并完成了任务，且最终答案验证正确！';
                   } else {
-                    validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                    validationMsg = `模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
                   }
                 } catch (e) { toolResults = { error: e.message }; }
               }
@@ -2376,6 +2390,7 @@
 
         if (validationStatus === true) addInlineSuccess(validationMsg);
         else if (validationStatus === false) addInlineError(validationMsg);
+        else if (apiError) addInlineError(`API 请求失败，流程提前结束（${sanitizeSensitiveText(apiErrorMsg)}）。请检查 API URL、Key 和模型名称是否正确。`);
         else if (!hasSubmittedAnswer) addInlineInfo('模型未执行最终的答案提交工具，流程提前结束。');
       }
       else if (scenario === 'responses_tools') {
@@ -2420,8 +2435,10 @@
         let hasSubmittedAnswer = false;
         let validationStatus = null;
         let validationMsg = '';
+        let apiError = false;
+        let apiErrorMsg = '';
 
-        const MAX_TURNS = 8;
+        const MAX_TURNS = 3;
         while (turn <= MAX_TURNS) {
           const rtReq = { model, tools, input: history, instructions: '你不仅能够调用 convert_base 工具，还必须在得到最终计算结果后调用 submit_answer 工具来提交最终答案。', stream: isStreamEnabled() };
           const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
@@ -2502,9 +2519,9 @@
                         validationStatus = isCorrect;
                         toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
                         if (isCorrect) {
-                          validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                          validationMsg = '模型成功识别并完成了任务，且最终答案验证正确！';
                         } else {
-                          validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                          validationMsg = `模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
                         }
                       } catch (e) { toolResults = { error: e.message }; }
                     }
@@ -2533,7 +2550,9 @@
             }
           } catch (streamErr) {
             if (streamErr && streamErr.name === 'AbortError') throw streamErr;
-            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
+            apiError = true;
+            apiErrorMsg = streamErr.message || String(streamErr);
+            addBlock(`响应 #${turn}`, { error: sanitizeSensitiveText(apiErrorMsg) }, 0);
             break;
           }
           if (isStreamed) break; // streamed without tool calls — already broke above
@@ -2574,9 +2593,9 @@
                   validationStatus = isCorrect;
                   toolResults = { success: isCorrect, message: isCorrect ? '验证通过！答案正确。' : `验证失败。预期结果为: ${activeExpectedAnswer}` };
                   if (isCorrect) {
-                    validationMsg = '经过多轮工具调用，模型成功识别并完成了任务，且最终答案验证正确！';
+                    validationMsg = '模型成功识别并完成了任务，且最终答案验证正确！';
                   } else {
-                    validationMsg = `经过多轮工具调用，模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
+                    validationMsg = `模型虽然尝试完成任务，但最终提交的答案验证错误（提交值: ${args.answer}）。`;
                   }
                 } catch (e) { toolResults = { error: e.message }; }
               }
@@ -2596,6 +2615,7 @@
 
         if (validationStatus === true) addInlineSuccess(validationMsg);
         else if (validationStatus === false) addInlineError(validationMsg);
+        else if (apiError) addInlineError(`API 请求失败，流程提前结束（${sanitizeSensitiveText(apiErrorMsg)}）。请检查 API URL、Key 和模型名称是否正确。`);
         else if (!hasSubmittedAnswer) addInlineInfo('模型未执行最终的答案提交工具，流程提前结束。');
       }
       else if (scenario === 'responses_search') {
