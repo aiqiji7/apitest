@@ -528,6 +528,7 @@
     labelEl.textContent = `· ${label}`;
     meta.appendChild(roleEl); meta.appendChild(labelEl);
     const pre = document.createElement('pre');
+    pre.className = 'answer-content';
     pre.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
     title.appendChild(meta);
     card.appendChild(title);
@@ -537,6 +538,16 @@
     if (requestPending) { showWaiting(); }
     updateClearBtnState();
     return card;
+  }
+
+  function updateMessageCard(card, label, payload) {
+    if (!card) return;
+    const labelEl = card.querySelector('.label');
+    if (labelEl) labelEl.textContent = `· ${label}`;
+    const pre = card.querySelector('pre.answer-content');
+    if (pre) {
+      pre.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+    }
   }
 
   function clearResults() {
@@ -985,7 +996,7 @@
       if (!assistantCard) {
         assistantCard = addMessage('assistant', '回答（流式）', fullText);
       } else {
-        const pre = assistantCard.querySelector('pre');
+        const pre = assistantCard.querySelector('pre.answer-content');
         if (pre) {
           pre.textContent = fullText;
           pre.scrollTop = pre.scrollHeight;
@@ -1040,6 +1051,11 @@
         }
         // Finalize reasoning section (collapse it)
         finalizeReasoningInCard(assistantCard, accumulatedReasoning);
+        // If content is empty but reasoning exists, show hint in the answer area
+        if (!accumulatedText && accumulatedReasoning) {
+          const pre = assistantCard.querySelector('pre.answer-content');
+          if (pre) pre.textContent = '（模型未输出正式回答，内容在上方思考过程中）';
+        }
       }
     } else if (result.json) {
       addBlock('响应 #1', result.json, duration);
@@ -1069,6 +1085,11 @@
       }
       // Add reasoning section to non-streamed card
       if (nonStreamCard && result.reasoningText) {
+        addReasoningToCard(nonStreamCard, result.reasoningText);
+      }
+      // If no content card was created but reasoning exists, show a hint card
+      if (!nonStreamCard && result.reasoningText) {
+        nonStreamCard = addMessage('assistant', '回答', '（模型未输出正式回答，内容在上方思考过程中）');
         addReasoningToCard(nonStreamCard, result.reasoningText);
       }
     } else {
@@ -1836,6 +1857,7 @@
           let assistantCard = null;
           let data = null;
           let isStreamed = false;
+          let resultReasoningText = null;
           try {
             const result = await fetchAndStream(endpoint, {
               method: 'POST',
@@ -1847,7 +1869,7 @@
               if (!assistantCard) {
                 assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
               } else {
-                const preEl = assistantCard.querySelector('pre');
+                const preEl = assistantCard.querySelector('pre.answer-content');
                 if (preEl) preEl.textContent = fullText;
               }
             }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
@@ -1857,6 +1879,7 @@
               }
               updateReasoningInCard(assistantCard, fullReasoning);
             });
+            resultReasoningText = result.reasoningText;
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - tStart);
@@ -1866,7 +1889,7 @@
                 // Build assistant message from accumulated streaming tool calls
                 const assistantMsg = { role: 'assistant', content: accText || null, tool_calls: result.toolCalls };
                 messages.push(assistantMsg);
-                addMessage('assistant', `模型响应 #${turn}`, assistantMsg);
+                updateMessageCard(assistantCard, `模型响应 #${turn}`, assistantMsg);
                 // Process tool calls — same logic as non-streaming path
                 for (const toolCall of result.toolCalls) {
                   let toolResults = { error: 'Unknown function' };
@@ -1925,7 +1948,7 @@
           const assistantMsg = choice.message;
           messages.push(assistantMsg);
           const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, assistantMsg);
-          if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
+          if (toolCallCard && resultReasoningText) addReasoningToCard(toolCallCard, resultReasoningText);
 
           if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
             for (const toolCall of assistantMsg.tool_calls) {
@@ -2024,6 +2047,7 @@
           let assistantCard = null;
           let aData = null;
           let isStreamed = false;
+          let resultReasoningText = null;
           try {
             const result = await fetchAndStream(anthropicEndpoint, {
               method: 'POST',
@@ -2035,7 +2059,7 @@
               if (!assistantCard) {
                 assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
               } else {
-                const preEl = assistantCard.querySelector('pre');
+                const preEl = assistantCard.querySelector('pre.answer-content');
                 if (preEl) preEl.textContent = fullText;
               }
             }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
@@ -2045,6 +2069,7 @@
               }
               updateReasoningInCard(assistantCard, fullReasoning);
             });
+            resultReasoningText = result.reasoningText;
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - aTStart);
@@ -2058,7 +2083,7 @@
                   contentArr.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
                 }
                 messages.push({ role: 'assistant', content: contentArr });
-                addMessage('assistant', `模型响应 #${turn}`, contentArr);
+                updateMessageCard(assistantCard, `模型响应 #${turn}`, contentArr);
                 // Process tool uses — same logic as non-streaming path
                 const toolUses = contentArr.filter(p => p && p.type === 'tool_use');
                 if (toolUses.length > 0) {
@@ -2119,7 +2144,7 @@
           const contentArr = Array.isArray(aData && aData.content) ? aData.content : [];
           messages.push({ role: 'assistant', content: contentArr });
           const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, contentArr);
-          if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
+          if (toolCallCard && resultReasoningText) addReasoningToCard(toolCallCard, resultReasoningText);
 
           const toolUses = contentArr.filter(p => p && p.type === 'tool_use');
           if (toolUses.length > 0) {
@@ -2218,13 +2243,14 @@
           let assistantCard = null;
           let gData = null;
           let isStreamed = false;
+          let resultReasoningText = null;
           try {
             const result = await fetchAndStream(isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint, { method: 'POST', headers: requestHeaders, body: JSON.stringify(gReq), signal }, (chunkText, fullText) => {
               accText = fullText;
               if (!assistantCard) {
                 assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
               } else {
-                const preEl = assistantCard.querySelector('pre');
+                const preEl = assistantCard.querySelector('pre.answer-content');
                 if (preEl) preEl.textContent = fullText;
               }
             }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
@@ -2234,6 +2260,7 @@
               }
               updateReasoningInCard(assistantCard, fullReasoning);
             });
+            resultReasoningText = result.reasoningText;
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - gTStart);
@@ -2248,7 +2275,7 @@
                 }
                 const gContent = { role: 'model', parts };
                 contents.push(gContent);
-                addMessage('assistant', `模型响应 #${turn}`, gContent);
+                updateMessageCard(assistantCard, `模型响应 #${turn}`, gContent);
                 // Process function calls — same logic as non-streaming path
                 const responseParts = [];
                 for (const tc of result.toolCalls) {
@@ -2307,7 +2334,7 @@
 
           contents.push(gContent);
           const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, gContent);
-          if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
+          if (toolCallCard && resultReasoningText) addReasoningToCard(toolCallCard, resultReasoningText);
 
           const fcs = (gContent.parts || []).filter(p => p.functionCall);
           if (fcs.length > 0) {
@@ -2406,6 +2433,7 @@
           let assistantCard = null;
           let rtData = null;
           let isStreamed = false;
+          let resultReasoningText = null;
           try {
             const result = await fetchAndStream(responsesEndpoint, {
               method: 'POST',
@@ -2417,7 +2445,7 @@
               if (!assistantCard) {
                 assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
               } else {
-                const preEl = assistantCard.querySelector('pre');
+                const preEl = assistantCard.querySelector('pre.answer-content');
                 if (preEl) preEl.textContent = fullText;
               }
             }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
@@ -2427,6 +2455,7 @@
               }
               updateReasoningInCard(assistantCard, fullReasoning);
             });
+            resultReasoningText = result.reasoningText;
             if (result.isStreamed) {
               isStreamed = true;
               addBlock(`响应 #${turn}`, { streamed: true, content: accText }, Date.now() - rtTStart);
@@ -2450,9 +2479,9 @@
                 history.push(...outputs);
                 // Display assistant message
                 if (accText) {
-                  addMessage('assistant', `模型响应 #${turn}`, { text: accText });
+                  updateMessageCard(assistantCard, `模型响应 #${turn}`, { text: accText });
                 } else {
-                  addMessage('assistant', `模型响应 #${turn}`, outputs);
+                  updateMessageCard(assistantCard, `模型响应 #${turn}`, outputs);
                 }
                 // Process function calls — same logic as non-streaming path
                 const fcs = outputs.filter(item => item && item.type === 'function_call');
@@ -2515,15 +2544,15 @@
 
           if (rtData.output_text) {
             const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, { text: rtData.output_text });
-            if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
+            if (toolCallCard && resultReasoningText) addReasoningToCard(toolCallCard, resultReasoningText);
           } else {
             const msgItem = outputs.find(item => item && item.type === 'message');
             if (msgItem && msgItem.content) {
               const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, msgItem.content);
-              if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
+              if (toolCallCard && resultReasoningText) addReasoningToCard(toolCallCard, resultReasoningText);
             } else if (outputs.length > 0) {
               const toolCallCard = addMessage('assistant', `模型响应 #${turn}`, outputs);
-              if (toolCallCard && result.reasoningText) addReasoningToCard(toolCallCard, result.reasoningText);
+              if (toolCallCard && resultReasoningText) addReasoningToCard(toolCallCard, resultReasoningText);
             }
           }
 
@@ -2599,7 +2628,7 @@
             if (!assistantCard) {
               assistantCard = addMessage('assistant', '回答（流式）', fullText);
             } else {
-              const preEl = assistantCard.querySelector('pre');
+              const preEl = assistantCard.querySelector('pre.answer-content');
               if (preEl) preEl.textContent = fullText;
             }
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
@@ -2678,7 +2707,7 @@
             if (!assistantCard) {
               assistantCard = addMessage('assistant', '回答（流式）', fullText);
             } else {
-              const preEl = assistantCard.querySelector('pre');
+              const preEl = assistantCard.querySelector('pre.answer-content');
               if (preEl) preEl.textContent = fullText;
             }
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
@@ -2740,7 +2769,7 @@
             if (!assistantCard) {
               assistantCard = addMessage('assistant', '回答（流式）', fullText);
             } else {
-              const preEl = assistantCard.querySelector('pre');
+              const preEl = assistantCard.querySelector('pre.answer-content');
               if (preEl) preEl.textContent = fullText;
             }
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
@@ -2822,7 +2851,7 @@
             if (!assistantCard) {
               assistantCard = addMessage('assistant', '回答（流式）', fullText);
             } else {
-              const preEl = assistantCard.querySelector('pre');
+              const preEl = assistantCard.querySelector('pre.answer-content');
               if (preEl) preEl.textContent = fullText;
             }
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
@@ -2910,7 +2939,7 @@
             if (!assistantCard) {
               assistantCard = addMessage('assistant', '回答（流式）', fullText);
             } else {
-              const preEl = assistantCard.querySelector('pre');
+              const preEl = assistantCard.querySelector('pre.answer-content');
               if (preEl) preEl.textContent = fullText;
             }
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
@@ -2983,7 +3012,7 @@
             if (!assistantCard) {
               assistantCard = addMessage('assistant', '回答（流式）', fullText);
             } else {
-              const preEl = assistantCard.querySelector('pre');
+              const preEl = assistantCard.querySelector('pre.answer-content');
               if (preEl) preEl.textContent = fullText;
             }
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
@@ -3484,7 +3513,7 @@
   // Add a collapsible reasoning section to a message card
   function addReasoningToCard(card, reasoningText) {
     if (!reasoningText) return;
-    const pre = card.querySelector('pre');
+    const pre = card.querySelector('pre.answer-content');
     if (!pre) return;
 
     const section = document.createElement('div');
@@ -3520,7 +3549,7 @@
     if (!reasoningText) return;
 
     if (!section) {
-      const pre = card.querySelector('pre');
+      const pre = card.querySelector('pre.answer-content');
       if (!pre) return;
       section = document.createElement('div');
       section.className = 'reasoning-section';
