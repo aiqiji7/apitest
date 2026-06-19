@@ -213,3 +213,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: 简化工具调用测试题 + CDATA 思考内容支持
+
+**Date**: 2026-06-20
+**Task**: 简化工具调用测试题 + CDATA 思考内容支持
+**Branch**: `main`
+
+### Summary
+
+将工具调用测试从两步链式转换简化为单步转换（MAX_TURNS 8→3），新增对 content 字段中 <![CDATA[...]]> 包裹思考内容的提取支持（流式+非流式路径），更新前端 quality-guidelines spec 记录 CDATA 解析 gotcha 和推理提取优先级。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3ad9b62` | (see git log) |
+| `e0b8b75` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
