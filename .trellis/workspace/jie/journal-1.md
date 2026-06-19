@@ -280,3 +280,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: 支持 content 中嵌入 thinking XML 标签的思考过程解析
+
+**Date**: 2026-06-20
+**Task**: 支持 content 中嵌入 thinking XML 标签的思考过程解析
+**Branch**: `main`
+
+### Summary
+
+在 fetchAndStream（流式）和 extractReasoningFromJson（非流式）中新增 thinking XML 标签解析，支持 thinking\n... 格式的思考块提取，含可选 response\n 分隔标记。更新 quality-guidelines.md 补充 gotcha 和提取优先级。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ca850c2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

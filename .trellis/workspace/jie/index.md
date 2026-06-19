@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-06-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~282 | Active |
+| `journal-1.md` | ~315 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-06-20 | 支持 content 中嵌入 thinking XML 标签的思考过程解析 | `ca850c2` | `main` |
 | 8 | 2026-06-20 | 等待状态耗时计时 + 移除 GitHub 跳转 | `b9c8c40` | `main` |
 | 7 | 2026-06-20 | 简化工具调用测试题 + CDATA 思考内容支持 | `3ad9b62`, `e0b8b75` | `main` |
 | 6 | 2026-06-19 | 修复流式多轮工具调用重复消息卡片 | `ff9537a`, `c0cdd12` | `main` |
