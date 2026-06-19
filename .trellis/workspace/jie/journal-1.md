@@ -247,3 +247,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: 等待状态耗时计时 + 移除 GitHub 跳转
+
+**Date**: 2026-06-20
+**Task**: 等待状态耗时计时 + 移除 GitHub 跳转
+**Branch**: `main`
+
+### Summary
+
+为连接中等状态增加实时耗时显示（已等待 Xm Xs），请求结束/中止/清空时停止计时；移除页面头部 https://github.com/aiqiji7/apitest 跳转链接。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b9c8c40` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
