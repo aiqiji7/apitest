@@ -188,13 +188,48 @@
 
   // Waiting inline loader helpers
   let waitingLabelEl = null; // reference to the label span for dynamic phase updates
+  let waitingPhaseText = '连接中...';
+  let waitingStartedAt = null;
+  let waitingTimerId = null;
+
+  function formatWaitingDuration(ms) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  function refreshWaitingLabel() {
+    if (!waitingLabelEl || !waitingEl || waitingEl.parentNode !== messageTimeline) return;
+    const elapsed = waitingStartedAt ? formatWaitingDuration(Date.now() - waitingStartedAt) : '0:00';
+    waitingLabelEl.textContent = `${waitingPhaseText} 已等待 ${elapsed}`;
+  }
+
+  function startWaitingTimer() {
+    if (waitingTimerId !== null) {
+      refreshWaitingLabel();
+      return;
+    }
+    waitingStartedAt = Date.now();
+    waitingTimerId = window.setInterval(refreshWaitingLabel, 1000);
+    refreshWaitingLabel();
+  }
+
+  function stopWaitingTimer() {
+    if (waitingTimerId !== null) {
+      window.clearInterval(waitingTimerId);
+      waitingTimerId = null;
+    }
+    waitingStartedAt = null;
+  }
+
   function ensureWaitingEl() {
     if (waitingEl) return waitingEl;
     const wrap = document.createElement('div');
     wrap.className = 'waiting-inline';
     const label = document.createElement('span');
     label.className = 'label';
-    label.textContent = '连接中...';
+    label.textContent = waitingPhaseText;
     waitingLabelEl = label;
     const dots = document.createElement('span');
     dots.className = 'dots';
@@ -209,6 +244,7 @@
     abortBtn.title = '中止当前请求';
     abortBtn.addEventListener('click', () => {
       abortCurrentRequest();
+      stopWaitingTimer();
       addInlineInfo('请求已中止');
     });
     wrap.appendChild(label);
@@ -218,12 +254,15 @@
     return waitingEl;
   }
   function updateWaitingLabel(text) {
-    if (waitingLabelEl) waitingLabelEl.textContent = text;
+    waitingPhaseText = text;
+    refreshWaitingLabel();
   }
   function showWaiting() {
     const el = ensureWaitingEl();
-    // Reset label to initial phase
-    if (waitingLabelEl) waitingLabelEl.textContent = '连接中...';
+    if (waitingTimerId === null) {
+      waitingPhaseText = '连接中...';
+    }
+    startWaitingTimer();
     if (el.parentNode !== messageTimeline) {
       messageTimeline.appendChild(el);
     } else {
@@ -231,9 +270,13 @@
       messageTimeline.removeChild(el);
       messageTimeline.appendChild(el);
     }
+    refreshWaitingLabel();
   }
   function hideWaiting() {
+    stopWaitingTimer();
     if (waitingEl && waitingEl.parentNode) { waitingEl.parentNode.removeChild(waitingEl); }
+    waitingEl = null;
+    waitingLabelEl = null;
   }
 
   // Info inline block (tip/warning)
@@ -551,6 +594,7 @@
   }
 
   function clearResults() {
+    stopWaitingTimer();
     blocksContainer.innerHTML = '';
     messageTimeline.innerHTML = '';
     errorMessage.textContent = '';

@@ -97,17 +97,6 @@ body {
     text-decoration: underline;
 }
 
-.header .github-link {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-}
-
-.header .github-link svg {
-    color: #6b7280;
-}
-
 .main-card {
     background: #fff;
     border-radius: 16px;
