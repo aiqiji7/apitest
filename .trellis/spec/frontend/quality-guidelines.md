@@ -85,6 +85,40 @@ function sanitizeSensitiveText(text) {
 
 ---
 
+## API Response Parsing
+
+### Gotcha: CDATA-wrapped thinking content in `content` string field
+
+> **Warning**: Some providers (e.g., GLM) embed thinking/reasoning content inside the `content` string field wrapped in `<![CDATA[...]]>` tags, instead of using dedicated `reasoning_content` / `reasoning` fields.
+>
+> Example:
+> ```json
+> {
+>   "role": "assistant",
+>   "content": "<![CDATA[\n我需要将十进制数 4404251 转换为八进制...\n]]>",
+>   "tool_calls": [...]
+> }
+> ```
+>
+> The code must extract CDATA blocks as reasoning text and strip them from the displayed content. Key edge cases:
+> - **Streaming**: `<![CDATA[` opening tag may be split across SSE chunks — use a `cdataOpenBuffer` to buffer partial opening tags
+> - **Multiple CDATA blocks**: A single `content` string may contain multiple `<![CDATA[...]]>` blocks — use global regex for extraction
+> - **Unclosed CDATA**: If the stream ends with an unclosed CDATA block, treat buffered content as reasoning (graceful degradation)
+> - **Content after CDATA**: Text before/after CDATA blocks is still normal content and must be displayed
+
+### Pattern: Reasoning content extraction priority
+
+When extracting reasoning/thinking content from API responses, check in this order:
+
+1. `choices[0].message.reasoning_content` (DeepSeek, Kimi, Qwen, GLM)
+2. `choices[0].message.reasoning` (Ollama, vLLM)
+3. `content[].type === "thinking"` blocks (Anthropic)
+4. `output[].type === "reasoning"` items (Responses API)
+5. `candidates[].content.parts[].thought` (Gemini)
+6. `<![CDATA[...]]>` in `content` string (GLM and similar)
+
+---
+
 ## Testing Requirements
 
 <!-- What level of testing is expected -->
