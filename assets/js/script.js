@@ -766,20 +766,6 @@
 
   clearBtn.addEventListener('click', clearResults);
 
-  // Column toggle (collapse/expand) — event delegation
-  const splitColumns = document.querySelector('.split-columns');
-  if (splitColumns) {
-    splitColumns.addEventListener('click', (e) => {
-      const h3 = e.target.closest('.column-toggle');
-      if (!h3) return;
-      const col = h3.closest('.column');
-      if (!col) return;
-      col.classList.toggle('collapsed');
-      const icon = h3.querySelector('.toggle-icon');
-      if (icon) icon.textContent = col.classList.contains('collapsed') ? '\u25B6' : '\u25BC';
-    });
-  }
-
   // Defaults
   // Password toggle functionality
   function initPasswordToggles() {
