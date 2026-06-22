@@ -5,7 +5,7 @@
 html,
 body {
     height: 100%;
-    overflow-x: hidden;
+    overflow: hidden;
 }
 
 body {
@@ -56,7 +56,10 @@ body {
 .container {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 12px;
+    padding: 10px 12px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
 @media (max-width: 600px) {
@@ -68,7 +71,8 @@ body {
 .header {
     text-align: center;
     color: #0f172a;
-    margin-bottom: 10px;
+    margin-bottom: 6px;
+    flex-shrink: 0;
 }
 
 .header h1 {
@@ -102,9 +106,14 @@ body {
 .main-card {
     background: #fff;
     border-radius: 16px;
-    padding: 16px 20px;
+    padding: 12px 16px;
     box-shadow: 0 12px 24px rgba(30, 144, 255, 0.12);
     border: 1px solid #e5f1ff;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
 }
 
 @media (max-width: 600px) {
@@ -118,7 +127,7 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
 }
 
 .config-header h2 {
@@ -129,8 +138,8 @@ body {
 
 /* 统一二级与三级标题字号与样式 */
 .test-section h2 {
-    margin: 8px 0 10px;
-    font-size: 18px;
+    margin: 4px 0 6px;
+    font-size: 16px;
     color: #0f172a;
 }
 
@@ -173,11 +182,20 @@ body {
 
 /* 分区之间增加垂直间距 */
 .test-section {
-    margin-top: 20px;
+    margin-top: 8px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.test-controls {
+    flex-shrink: 0;
 }
 
 .config-section {
-    margin-bottom: 20px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
 }
 
 .input-row {
@@ -200,7 +218,8 @@ body {
 .input-group {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
+    margin-bottom: 4px;
 }
 
 .input-group label {
@@ -283,7 +302,7 @@ body {
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
-    margin: 8px 0 12px;
+    margin: 6px 0 0;
 }
 
 .btn-group {
@@ -292,7 +311,7 @@ body {
 }
 
 .btn {
-    padding: 10px 16px;
+    padding: 8px 14px;
     border: none;
     border-radius: 8px;
     cursor: pointer;
@@ -332,7 +351,7 @@ body {
 
 .muted {
     color: #64748b;
-    margin: 4px 0 12px;
+    margin: 2px 0 6px;
 }
 
 /* 模型厂商页签 */
@@ -340,7 +359,7 @@ body {
     display: flex;
     gap: 24px;
     border-bottom: 2px solid #eef6ff;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     padding: 0 4px;
     overflow-x: auto;
     scrollbar-width: none;
@@ -360,7 +379,7 @@ body {
     background: transparent;
     border: none;
     border-radius: 0;
-    padding: 10px 4px;
+    padding: 8px 4px;
     color: #64748b;
     font-weight: 600;
     position: relative;
@@ -398,8 +417,8 @@ body {
 #testType {
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
-    margin-bottom: 12px;
+    gap: 8px;
+    margin-bottom: 6px;
 }
 
 #testType .seg-btn {
@@ -462,9 +481,9 @@ body {
     border: 1.5px solid #cfe6ff;
     border-radius: 10px;
     font-size: 14px;
-    line-height: 1.5;
+    line-height: 1.4;
     resize: vertical;
-    min-height: 60px;
+    min-height: 44px;
 }
 
 .input-textarea:focus {
@@ -476,8 +495,9 @@ body {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 12px;
-    margin-top: 12px;
-    max-height: 45vh;
+    margin-top: 8px;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
 }
 
@@ -489,7 +509,8 @@ body {
 
 .split-columns>.column {
     min-width: 0;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 @media (max-width: 900px) {
