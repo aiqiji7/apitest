@@ -135,9 +135,36 @@ body {
 }
 
 .column h3 {
-    margin: 10px 0 8px;
+    margin: 6px 0;
     color: #0f172a;
-    font-size: 18px;
+    font-size: 15px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.column h3:hover {
+    color: #1e90ff;
+}
+
+.toggle-icon {
+    font-size: 10px;
+    transition: transform 0.2s ease;
+}
+
+.column.collapsed .timeline,
+.column.collapsed .blocks-container {
+    display: none;
+}
+
+.column.collapsed .toggle-icon {
+    transform: rotate(0deg);
+}
+
+.column:not(.collapsed) .toggle-icon {
+    transform: rotate(90deg);
 }
 
 /* 分区之间增加垂直间距 */

@@ -766,6 +766,16 @@
 
   clearBtn.addEventListener('click', clearResults);
 
+  // Column toggle (collapse/expand)
+  document.querySelectorAll('.column-toggle').forEach(h3 => {
+    h3.addEventListener('click', () => {
+      const col = h3.closest('.column');
+      col.classList.toggle('collapsed');
+      const icon = h3.querySelector('.toggle-icon');
+      icon.textContent = col.classList.contains('collapsed') ? '\u25B6' : '\u25BC';
+    });
+  });
+
   // Defaults
   // Password toggle functionality
   function initPasswordToggles() {
