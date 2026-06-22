@@ -56,7 +56,7 @@ body {
 .container {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 24px;
+    padding: 16px;
 }
 
 @media (max-width: 600px) {
@@ -68,11 +68,11 @@ body {
 .header {
     text-align: center;
     color: #0f172a;
-    margin-bottom: 32px;
+    margin-bottom: 16px;
 }
 
 .header h1 {
-    font-size: 28px;
+    font-size: 22px;
     margin: 8px 0;
 }
 
@@ -100,7 +100,7 @@ body {
 .main-card {
     background: #fff;
     border-radius: 16px;
-    padding: 28px 24px 24px;
+    padding: 16px 20px;
     box-shadow: 0 12px 24px rgba(30, 144, 255, 0.12);
     border: 1px solid #e5f1ff;
 }
@@ -116,7 +116,7 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
+    margin-bottom: 12px;
 }
 
 .config-header h2 {
@@ -127,34 +127,34 @@ body {
 
 /* 统一二级与三级标题字号与样式 */
 .test-section h2 {
-    margin: 12px 0 18px;
+    margin: 8px 0 10px;
     font-size: 18px;
     color: #0f172a;
 }
 
 .column h3 {
-    margin: 16px 0 16px;
+    margin: 10px 0 8px;
     color: #0f172a;
     font-size: 18px;
 }
 
 /* 分区之间增加垂直间距 */
 .test-section {
-    margin-top: 36px;
+    margin-top: 20px;
 }
 
 .config-section {
-    margin-bottom: 36px;
+    margin-bottom: 20px;
 }
 
 .input-row {
-    margin-top: 16px;
+    margin-top: 8px;
 }
 
 .grid-3 {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 20px;
+    gap: 12px;
 }
 
 @media (max-width: 900px) {
@@ -167,7 +167,7 @@ body {
 .input-group {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
 }
 
 .input-group label {
@@ -177,7 +177,7 @@ body {
 
 .input-group input,
 .input-group select {
-    padding: 12px 14px;
+    padding: 8px 10px;
     border: 1.5px solid #cfe6ff;
     border-radius: 10px;
     font-size: 15px;
@@ -248,9 +248,9 @@ body {
 
 .btn-row {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     flex-wrap: wrap;
-    margin: 14px 0 24px;
+    margin: 8px 0 12px;
 }
 
 .btn-group {
@@ -299,7 +299,7 @@ body {
 
 .muted {
     color: #64748b;
-    margin: 6px 0 18px;
+    margin: 4px 0 12px;
 }
 
 /* 模型厂商页签 */
@@ -307,7 +307,7 @@ body {
     display: flex;
     gap: 24px;
     border-bottom: 2px solid #eef6ff;
-    margin-bottom: 20px;
+    margin-bottom: 12px;
     padding: 0 4px;
     overflow-x: auto;
     scrollbar-width: none;
@@ -366,7 +366,7 @@ body {
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
-    margin-bottom: 20px;
+    margin-bottom: 12px;
 }
 
 #testType .seg-btn {
@@ -425,13 +425,13 @@ body {
 /* 用户输入文本框 */
 .input-textarea {
     width: 100%;
-    padding: 12px 14px;
+    padding: 6px 8px;
     border: 1.5px solid #cfe6ff;
     border-radius: 10px;
-    font-size: 15px;
-    line-height: 1.6;
+    font-size: 14px;
+    line-height: 1.5;
     resize: vertical;
-    min-height: 80px;
+    min-height: 60px;
 }
 
 .input-textarea:focus {
@@ -442,8 +442,10 @@ body {
 .split-columns {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 20px;
+    gap: 12px;
     margin-top: 12px;
+    max-height: 45vh;
+    overflow-y: auto;
 }
 
 @media (max-width: 600px) {
@@ -467,7 +469,7 @@ body {
 .timeline {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
     min-width: 0;
 }
 
@@ -476,17 +478,17 @@ body {
     background: #ffffff;
     border: 1px solid #e5f1ff;
     border-radius: 12px;
-    padding: 14px;
+    padding: 10px;
     position: relative;
     max-width: 100%;
 }
 
 .card .title,
 .code-block .title {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     color: #0f172a;
-    margin-bottom: 10px;
+    margin-bottom: 6px;
     letter-spacing: .2px;
 }
 
@@ -501,12 +503,12 @@ body {
     font-size: 13px;
     line-height: 1.6;
     color: #0b2542;
-    max-height: 200px;
+    max-height: 120px;
     overflow-y: auto;
     background: #f8fbff;
     border: 1px solid #e5f1ff;
     border-radius: 8px;
-    padding: 10px;
+    padding: 8px;
 }
 
 .code-section-label {
@@ -607,8 +609,8 @@ body {
 }
 
 .image-preview img {
-    max-width: 160px;
-    max-height: 160px;
+    max-width: 120px;
+    max-height: 120px;
     border-radius: 8px;
     border: 1px solid #e2e8f0;
     object-fit: contain;
@@ -680,7 +682,7 @@ body {
 /* 对话时间轴消息样式 */
 .message {
     border-left: 4px solid #cfe6ff;
-    padding-left: 10px;
+    padding-left: 8px;
 }
 
 .message.user {
@@ -705,9 +707,9 @@ body {
 
 .message .meta {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
     color: #334155;
     font-size: 12px;
 }
@@ -1532,7 +1534,7 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 16px;
+    margin-bottom: 8px;
 }
 
 .stream-toggle-label {
