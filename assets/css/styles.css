@@ -159,6 +159,10 @@ body {
     display: none;
 }
 
+.waiting-container {
+    min-height: 0;
+}
+
 .column.collapsed .toggle-icon {
     transform: rotate(0deg);
 }

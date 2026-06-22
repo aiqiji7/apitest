@@ -11,6 +11,7 @@
   const clearBtn = $('#clearBtn');
   const blocksContainer = $('#blocksContainer');
   const messageTimeline = $('#messageTimeline');
+  const waitingContainer = $('#waitingContainer');
   const errorMessage = $('#errorMessage');
   const vendorTypeWrap = $('#vendorType');
   const testTypeWrap = $('#testType');
@@ -200,7 +201,7 @@
   }
 
   function refreshWaitingLabel() {
-    if (!waitingLabelEl || !waitingEl || waitingEl.parentNode !== messageTimeline) return;
+    if (!waitingLabelEl || !waitingEl || waitingEl.parentNode !== waitingContainer) return;
     const elapsed = waitingStartedAt ? formatWaitingDuration(Date.now() - waitingStartedAt) : '0:00';
     waitingLabelEl.textContent = `${waitingPhaseText} 已等待 ${elapsed}`;
   }
@@ -263,12 +264,11 @@
       waitingPhaseText = '连接中...';
     }
     startWaitingTimer();
-    if (el.parentNode !== messageTimeline) {
-      messageTimeline.appendChild(el);
+    if (el.parentNode !== waitingContainer) {
+      waitingContainer.appendChild(el);
     } else {
-      // 重新追加到末尾，确保在最新一条消息下方
-      messageTimeline.removeChild(el);
-      messageTimeline.appendChild(el);
+      waitingContainer.removeChild(el);
+      waitingContainer.appendChild(el);
     }
     refreshWaitingLabel();
   }
@@ -605,10 +605,10 @@
   function updateClearBtnState() {
     const hasTimeline = messageTimeline.children.length > 0;
     const hasBlocks = blocksContainer.children.length > 0;
-    const isWaiting = waitingEl && waitingEl.parentNode === messageTimeline;
+    const isWaiting = waitingEl && waitingEl.parentNode === waitingContainer;
 
     // 如果只有等待动画，视为无内容
-    const hasActualContent = hasBlocks || (hasTimeline && (!isWaiting || messageTimeline.children.length > 1));
+    const hasActualContent = hasBlocks || hasTimeline;
 
     clearBtn.disabled = !hasActualContent && !requestPending;
   }
@@ -766,15 +766,19 @@
 
   clearBtn.addEventListener('click', clearResults);
 
-  // Column toggle (collapse/expand)
-  document.querySelectorAll('.column-toggle').forEach(h3 => {
-    h3.addEventListener('click', () => {
+  // Column toggle (collapse/expand) — event delegation
+  const splitColumns = document.querySelector('.split-columns');
+  if (splitColumns) {
+    splitColumns.addEventListener('click', (e) => {
+      const h3 = e.target.closest('.column-toggle');
+      if (!h3) return;
       const col = h3.closest('.column');
+      if (!col) return;
       col.classList.toggle('collapsed');
       const icon = h3.querySelector('.toggle-icon');
-      icon.textContent = col.classList.contains('collapsed') ? '\u25B6' : '\u25BC';
+      if (icon) icon.textContent = col.classList.contains('collapsed') ? '\u25B6' : '\u25BC';
     });
-  });
+  }
 
   // Defaults
   // Password toggle functionality
