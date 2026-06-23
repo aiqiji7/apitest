@@ -760,7 +760,7 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    margin: 8px 0 4px;
+    margin: 0;
     padding-left: 10px;
 }
 
@@ -1591,6 +1591,27 @@ body {
     font-size: 12px;
     color: #94a3b8;
     font-weight: normal;
+}
+
+/* 用户消息默认折叠 */
+.message.collapsed pre.answer-content {
+    display: none;
+}
+
+.message .msg-toggle-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: #64748b;
+    font-size: 11px;
+    padding: 0 4px;
+    line-height: 1;
+    transition: transform 0.2s ease, color 0.2s ease;
+    margin-left: auto;
+}
+
+.message .msg-toggle-btn:hover {
+    color: #1e90ff;
 }
 
 /* Reasoning / thinking section in message cards */

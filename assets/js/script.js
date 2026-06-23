@@ -559,6 +559,9 @@
   function addMessage(role, label, payload) {
     const card = document.createElement('div');
     card.className = `card message ${role}`;
+    if (role === 'user') {
+      card.classList.add('collapsed');
+    }
     const title = document.createElement('div');
     title.className = 'title';
     const meta = document.createElement('div');
@@ -570,6 +573,28 @@
     labelEl.className = 'label';
     labelEl.textContent = `· ${label}`;
     meta.appendChild(roleEl); meta.appendChild(labelEl);
+
+    // Add toggle button for user messages
+    if (role === 'user') {
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'msg-toggle-btn';
+      toggleBtn.innerHTML = '&#9654;';
+      toggleBtn.setAttribute('aria-label', '展开/折叠');
+      toggleBtn.title = '展开/折叠';
+      toggleBtn.setAttribute('aria-expanded', 'false');
+      toggleBtn.addEventListener('click', () => {
+        card.classList.toggle('collapsed');
+        if (card.classList.contains('collapsed')) {
+          toggleBtn.innerHTML = '&#9654;';
+          toggleBtn.setAttribute('aria-expanded', 'false');
+        } else {
+          toggleBtn.innerHTML = '&#9660;';
+          toggleBtn.setAttribute('aria-expanded', 'true');
+        }
+      });
+      meta.appendChild(toggleBtn);
+    }
+
     const pre = document.createElement('pre');
     pre.className = 'answer-content';
     pre.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
