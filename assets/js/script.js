@@ -796,6 +796,23 @@
     apiUrlEl.value = normalizeApiUrl(apiUrlEl.value);
     updateRecentConnectionsButtonState();
   });
+
+  // API URL 协议提示：本地服务请输入 http:// 前缀
+  const apiUrlHint = document.createElement('small');
+  apiUrlHint.textContent = '本地服务请输入 http:// 前缀';
+  apiUrlHint.style.cssText = 'color:#888;font-size:0.8em;margin-top:2px;display:none;';
+  // Insert after the url-input-wrapper (flex row), inside the .input-group (flex column)
+  const apiUrlWrapper = apiUrlEl.parentNode;
+  apiUrlWrapper.parentNode.insertBefore(apiUrlHint, apiUrlWrapper.nextSibling);
+  function toggleApiUrlHint() {
+    const val = apiUrlEl.value.trim();
+    const hasProtocol = /^https?:\/\//i.test(val);
+    apiUrlHint.style.display = (!hasProtocol && document.activeElement === apiUrlEl) ? 'block' : 'none';
+  }
+  apiUrlEl.addEventListener('focus', toggleApiUrlHint);
+  apiUrlEl.addEventListener('blur', () => { apiUrlHint.style.display = 'none'; });
+  apiUrlEl.addEventListener('input', toggleApiUrlHint);
+
   configUrlEl.addEventListener('blur', () => {
     configUrlEl.value = normalizeApiUrl(configUrlEl.value);
   });
@@ -980,7 +997,17 @@
   }
 
   function addIqTestReference(test, durationMs) {
-    addInlineInfo(`${test.label} 对比参考：正确答案：${test.expectedAnswer}；参考思考时间：${test.expectedDuration}；本次响应耗时：${formatDuration(durationMs)}。未自动判分，请手动对比模型输出。`);
+    const label = escapeHtml(test.label);
+    const expectedAnswer = escapeHtml(test.expectedAnswer);
+    const expectedDuration = escapeHtml(test.expectedDuration);
+    const durationFormatted = escapeHtml(formatDuration(durationMs));
+    const html = `${label} 对比参考：正确答案：${expectedAnswer}；参考思考时间：${expectedDuration}；<br>本次响应耗时：<span class="duration-highlight">${durationFormatted}</span>。未自动判分，请手动对比模型输出。`;
+    const el = document.createElement('div');
+    el.className = 'info-inline';
+    el.innerHTML = html;
+    messageTimeline.appendChild(el);
+    updateClearBtnState();
+    return el;
   }
 
   async function sendStandardTextRequestForVendor({ vendor, apiKey, model, userText, endpoint, anthropicEndpoint, geminiStreamEndpoint, geminiEndpoint, signal, responsesEndpoint }) {
@@ -3206,7 +3233,21 @@
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      const e = new Error(`HTTP ${res.status}`);
+      // 构建 error message：优先 statusText，否则尝试从 JSON 响应体提取错误摘要
+      let statusLabel = res.statusText ? `HTTP ${res.status} ${res.statusText}` : `HTTP ${res.status}`;
+      if (!res.statusText && text) {
+        try {
+          const json = JSON.parse(text);
+          const msg = (json && json.error && typeof json.error === 'object' && json.error.message)
+            || (json && json.error && typeof json.error === 'string' && json.error)
+            || (json && json.message)
+            || (json && json.detail);
+          if (msg && typeof msg === 'string' && msg.length <= 200) {
+            statusLabel = `HTTP ${res.status}: ${msg}`;
+          }
+        } catch { /* 非 JSON 响应，忽略 */ }
+      }
+      const e = new Error(statusLabel);
       e.status = res.status;
       e.statusText = res.statusText;
       e.rawText = text;

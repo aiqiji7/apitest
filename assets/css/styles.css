@@ -690,6 +690,11 @@ body {
     font-size: 13px;
 }
 
+.duration-highlight {
+    color: #f97316;
+    font-weight: 600;
+}
+
 .success-inline {
     background: #f0fdf4;
     border: 1px solid #bbf7d0;
