@@ -458,7 +458,7 @@ body {
     font-size: 14px;
     line-height: 1.4;
     resize: vertical;
-    min-height: 44px;
+    min-height: 59px;
 }
 
 .input-textarea:focus {
