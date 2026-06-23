@@ -385,3 +385,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: 用户消息默认折叠 + 测试状态移至清空结果右侧
+
+**Date**: 2026-06-23
+**Task**: 用户消息默认折叠 + 测试状态移至清空结果右侧
+**Branch**: `main`
+
+### Summary
+
+1) role=user 消息卡片默认折叠，点击 toggle 展开；2) #waitingContainer 从 timelineColumn 移至 .btn-row 清空结果按钮右侧
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b82d5c9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

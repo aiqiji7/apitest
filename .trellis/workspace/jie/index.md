@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
+- **Total Sessions**: 12
 - **Last Active**: 2026-06-23
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~387 | Active |
+| `journal-1.md` | ~420 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-06-23 | 用户消息默认折叠 + 测试状态移至清空结果右侧 | `b82d5c9` | `main` |
 | 11 | 2026-06-23 | 错误信息显示优化与 HTTP URL 兼容 | `0bc8d46`, `7eaeb93` | `main` |
 | 10 | 2026-06-22 | 紧凑化页面布局 | `68335ba`, `255fd93`, `9c16f31`, `70f41f6`, `adf2496`, `92562e0` | `main` |
 | 9 | 2026-06-20 | 支持 content 中嵌入 thinking XML 标签的思考过程解析 | `ca850c2` | `main` |
