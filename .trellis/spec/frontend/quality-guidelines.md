@@ -62,6 +62,35 @@ pre.answer-content:empty::after {
 
 ## Required Patterns
 
+### Required Pattern: Include statusText in HTTP Error Messages
+
+When constructing `Error` objects from HTTP responses, always include `statusText` when available so users see meaningful error descriptions (e.g., "HTTP 401 Unauthorized") instead of bare status codes. When `statusText` is empty, attempt to extract an error summary from the JSON response body.
+
+```js
+// Don't: only status code
+const e = new Error(`HTTP ${res.status}`);
+
+// Do: include statusText with fallback; try JSON body when statusText is empty
+let statusLabel = res.statusText ? `HTTP ${res.status} ${res.statusText}` : `HTTP ${res.status}`;
+if (!res.statusText && text) {
+  try {
+    const json = JSON.parse(text);
+    const msg = (json?.error?.message) || (typeof json?.error === 'string' && json.error)
+              || json?.message || json?.detail;
+    if (msg && typeof msg === 'string' && msg.length <= 200) {
+      statusLabel = `HTTP ${res.status}: ${msg}`;
+    }
+  } catch { /* non-JSON, ignore */ }
+}
+const e = new Error(statusLabel);
+```
+
+**Why**: Bare status codes like "HTTP 500" give no hint about what went wrong. Many API servers/proxies return empty `statusText`, putting the real error reason in the JSON body. Extracting it saves the user from having to expand the raw response.
+
+**Extraction priority**: `error.message` → `error` (string) → `message` → `detail`. Message truncated at 200 chars to avoid bloating inline error display.
+
+---
+
 ### Required Pattern: Sanitize User-Visible Fetch Errors
 
 User-visible fetch errors may include backend response bodies or attempted URLs. Always sanitize before rendering:
@@ -82,6 +111,54 @@ function sanitizeSensitiveText(text) {
     .trim();
 }
 ```
+
+---
+
+### Pattern: Sanitize Dynamic HTML Content
+
+When inserting dynamic values into HTML strings (e.g., via `innerHTML`), always sanitize using `escapeHtml()` to prevent XSS.
+
+**Problem**:
+```js
+// Unsafe: direct string interpolation
+element.innerHTML = `User input: ${userInput}`;
+```
+
+**Why it's bad**: If `userInput` contains `<script>` or event handlers, it will execute.
+
+**Instead**:
+```js
+function escapeHtml(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/{/g, '&#123;')
+    .replace(/}/g, '&#125;');
+}
+
+element.innerHTML = `User input: ${escapeHtml(userInput)}`;
+```
+
+**Note**: For user-controlled content, prefer `textContent` over `innerHTML` when possible.
+
+---
+
+## DOM Manipulation
+
+### Gotcha: Inserting elements near flex containers
+
+> **Warning**: When inserting a hint/helper element below an input that lives inside a `display: flex; align-items: center` wrapper, `insertBefore(element, input.nextSibling)` places the new element **inside** the flex row — making it appear inline beside the input instead of below it.
+>
+> **Instead**: Insert after the wrapper element (not after the input), so the new element lands in the parent's column flow:
+> ```js
+> // Wrong: hint appears inline next to the input
+> apiUrlEl.parentNode.insertBefore(hint, apiUrlEl.nextSibling);
+>
+> // Correct: hint appears below the input row
+> apiUrlWrapper.parentNode.insertBefore(hint, apiUrlWrapper.nextSibling);
+> ```
 
 ---
 
