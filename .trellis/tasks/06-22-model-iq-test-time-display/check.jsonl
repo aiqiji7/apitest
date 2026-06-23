@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "代码质量规范，检查HTML注入安全性和禁止模式"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件规范，检查样式和组件模式一致性"}

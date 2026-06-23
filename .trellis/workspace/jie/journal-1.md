@@ -351,3 +351,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: 错误信息显示优化与 HTTP URL 兼容
+
+**Date**: 2026-06-23
+**Task**: 错误信息显示优化与 HTTP URL 兼容
+**Branch**: `main`
+
+### Summary
+
+修复两个前端 UX 问题：(1) HTTP 错误信息从仅显示状态码增强为包含 statusText 和 JSON 响应体摘要；(2) API URL 输入框下方添加 http:// 前缀提示引导本地服务用户。同时修复了提示元素在 flex 容器内错误插入位置的问题。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0bc8d46` | (see git log) |
+| `7eaeb93` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

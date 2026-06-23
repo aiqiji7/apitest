@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件开发规范，了解项目组件模式和样式约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "代码质量规范，了解禁止模式和必需模式，特别是HTML注入安全性"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Hook规范，了解数据获取和流式响应模式"}
