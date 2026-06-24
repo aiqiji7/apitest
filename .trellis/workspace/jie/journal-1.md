@@ -451,3 +451,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: 添加 OpenAI Juice 值测试场景
+
+**Date**: 2026-06-24
+**Task**: 添加 OpenAI Juice 值测试场景
+**Branch**: `main`
+
+### Summary
+
+在 OpenAI 测试项目中添加 Juice 值测试场景，仅对 OpenAI 厂商可见，发送完整 XML 测试文本并显示响应耗时。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0a6740c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
