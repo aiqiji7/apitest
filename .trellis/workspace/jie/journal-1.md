@@ -418,3 +418,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: HTTP API 自动代理功能
+
+**Date**: 2026-06-24
+**Task**: HTTP API 自动代理功能
+**Branch**: `main`
+
+### Summary
+
+实现 HTTP API 自动代理：检测 http:// URL 自动走 HTTPS 代理，解决 Mixed Content 限制
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8bede06` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
