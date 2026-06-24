@@ -28,6 +28,9 @@
             <label for="apiUrl">API URL</label>
             <div class="url-input-wrapper">
               <input type="text" id="apiUrl" placeholder="例如：https://api.openai.com" />
+              <span id="httpWarningIcon" class="http-warning-icon" role="alert" aria-label="检测到 HTTP 地址，需要配置 HTTPS 代理" title="检测到 HTTP 地址，需要配置 HTTPS 代理才能在 HTTPS 页面访问" style="display:none;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+              </span>
               <button type="button" id="showRecentConnectionsBtn" class="model-fetch-btn recent-connections-btn" title="暂无最近连接" aria-label="展开最近连接列表" aria-controls="recentDropdown" aria-haspopup="listbox" aria-expanded="false" disabled>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M4 7h16"/>
@@ -35,6 +38,10 @@
                   <path d="M4 17h10"/>
                 </svg>
               </button>
+            </div>
+            <div id="httpProxyRow" class="proxy-row">
+              <input type="text" id="httpProxyUrl" placeholder="HTTPS 代理地址，例如：https://your-proxy.workers.dev" />
+              <span class="proxy-label">代理</span>
             </div>
             <div id="recentDropdown" class="recent-dropdown" role="listbox" style="display:none;"></div>
           </div>

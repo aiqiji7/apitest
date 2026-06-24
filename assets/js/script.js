@@ -44,6 +44,9 @@
   const removeImageBtn = $('#removeImageBtn');
   const recentDropdown = $('#recentDropdown');
   const streamToggleEl = $('#streamToggle');
+  const httpProxyUrlEl = $('#httpProxyUrl');
+  const httpProxyRowEl = $('#httpProxyRow');
+  const httpWarningIconEl = $('#httpWarningIcon');
 
   // Image state
   let currentImageData = null; // base64 data URL or external URL string
@@ -87,6 +90,22 @@
     updateRecentConnectionsButtonState();
   }
 
+  // HTTP Proxy helpers
+  function getProxyUrl() {
+    return (localStorage.getItem('httpProxyUrl') || '').trim();
+  }
+  function saveProxyUrl(url) {
+    localStorage.setItem('httpProxyUrl', url || '');
+  }
+  function applyProxy(baseUrl) {
+    const proxyUrl = getProxyUrl();
+    if (!proxyUrl) return baseUrl;
+    if (!baseUrl || !baseUrl.toLowerCase().startsWith('http://')) return baseUrl;
+    // Rewrite: http://target:port/path -> https://proxy/proxy/http://target:port/path
+    const normalizedProxy = stripTrailingSlash(proxyUrl);
+    return `${normalizedProxy}/proxy/${baseUrl}`;
+  }
+
   function updateRecentConnectionsButtonState() {
     if (!showRecentConnectionsBtn || !recentDropdown) return;
     const recentConnections = loadRecentConnections();
@@ -111,21 +130,21 @@
     // 仅去除尾部斜杠，保留完整路径（不截断到 origin，以支持子路径部署）
     return stripTrailingSlash(val);
   }
-  function buildEndpoint(base) { return stripTrailingSlash(base) + '/v1/chat/completions'; }
+  function buildEndpoint(base) { return stripTrailingSlash(applyProxy(base)) + '/v1/chat/completions'; }
   function buildGeminiEndpoint(base, model, apiKey) {
-    const root = stripTrailingSlash(base);
+    const root = stripTrailingSlash(applyProxy(base));
     return `${root}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   }
   function buildGeminiStreamEndpoint(base, model, apiKey) {
-    const root = stripTrailingSlash(base);
+    const root = stripTrailingSlash(applyProxy(base));
     return `${root}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
   }
   function buildAnthropicEndpoint(base) {
-    const root = stripTrailingSlash(base);
+    const root = stripTrailingSlash(applyProxy(base));
     return `${root}/v1/messages`;
   }
   function buildResponsesEndpoint(base) {
-    const root = stripTrailingSlash(base);
+    const root = stripTrailingSlash(applyProxy(base));
     return `${root}/v1/responses`;
   }
 
@@ -459,12 +478,14 @@
     apiKeyEl.value = cfg.key || SYSTEM_DEFAULTS.apiKey;
     modelEl.value = cfg.model || SYSTEM_DEFAULTS.model;
     updateRecentConnectionsButtonState();
+    updateHttpProxyUI();
   }
   function applySystemDefaultToTop() {
     apiUrlEl.value = SYSTEM_DEFAULTS.apiUrl;
     apiKeyEl.value = SYSTEM_DEFAULTS.apiKey;
     modelEl.value = SYSTEM_DEFAULTS.model;
     updateRecentConnectionsButtonState();
+    updateHttpProxyUI();
   }
 
   // UI builders
@@ -718,6 +739,7 @@
       apiKeyEl.value = cfg.key || '';
       modelEl.value = cfg.model || SYSTEM_DEFAULTS.model;
       updateRecentConnectionsButtonState();
+      updateHttpProxyUI();
       configModal.classList.remove('open');
     }
   });
@@ -820,6 +842,7 @@
   apiUrlEl.addEventListener('blur', () => {
     apiUrlEl.value = normalizeApiUrl(apiUrlEl.value);
     updateRecentConnectionsButtonState();
+    updateHttpProxyUI();
   });
 
   // API URL 协议提示：本地服务请输入 http:// 前缀
@@ -864,6 +887,7 @@
     if (openaiProtocolWrap) openaiProtocolWrap.style.display = '';
     updateRecentConnectionsButtonState();
     updateClearBtnState();
+    updateHttpProxyUI();
   });
 
   const IQ_TESTS = {
@@ -1469,7 +1493,7 @@
     const signal = fetchAbortController.signal;
 
     const method = 'GET';
-    const normalizedUrl = stripTrailingSlash(apiUrl);
+    const normalizedUrl = stripTrailingSlash(applyProxy(apiUrl));
     const modelUrl = `${normalizedUrl}/v1/models`;
 
     fetchModelsBtn.classList.add('loading');
@@ -1732,6 +1756,7 @@
           apiUrlEl.value = entry.url;
           apiKeyEl.value = entry.key;
           modelEl.value = entry.model;
+          updateHttpProxyUI();
         }
         closeRecentDropdown();
       });
@@ -4029,4 +4054,45 @@
     e.contentType = parsed && parsed.contentType;
     throw e;
   }
+
+  // === HTTP Proxy Logic ===
+  function updateHttpProxyUI() {
+    const apiUrl = apiUrlEl.value.trim();
+    const isHttp = apiUrl.toLowerCase().startsWith('http://');
+    const hasProxy = !!getProxyUrl();
+
+    // Show warning icon when http:// but no proxy configured
+    if (httpWarningIconEl) {
+      httpWarningIconEl.style.display = (isHttp && !hasProxy) ? '' : 'none';
+    }
+
+    // Highlight proxy row when http:// (warning state)
+    if (httpProxyRowEl) {
+      httpProxyRowEl.classList.toggle('proxy-row-warning', isHttp && !hasProxy);
+    }
+  }
+
+  // Initialize proxy URL from localStorage
+  if (httpProxyUrlEl) {
+    httpProxyUrlEl.value = getProxyUrl();
+  }
+
+  // Listen for API URL changes
+  apiUrlEl.addEventListener('input', updateHttpProxyUI);
+  apiUrlEl.addEventListener('change', updateHttpProxyUI);
+
+  // Listen for proxy URL changes and auto-save
+  if (httpProxyUrlEl) {
+    httpProxyUrlEl.addEventListener('input', () => {
+      saveProxyUrl(httpProxyUrlEl.value.trim());
+      updateHttpProxyUI();
+    });
+    httpProxyUrlEl.addEventListener('change', () => {
+      saveProxyUrl(httpProxyUrlEl.value.trim());
+      updateHttpProxyUI();
+    });
+  }
+
+  // Initial UI update
+  updateHttpProxyUI();
 })();
