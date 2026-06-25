@@ -1686,38 +1686,74 @@ body {
     50% { opacity: 0.5; }
 }
 
+/* Proxy toggle trigger */
+.proxy-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+    padding: 2px 0;
+    font-size: 12px;
+    color: #64748b;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.2s ease;
+}
+
+.proxy-toggle:hover {
+    color: #1e90ff;
+}
+
+.proxy-toggle svg {
+    transition: transform 0.2s ease;
+}
+
+.proxy-toggle.expanded svg {
+    transform: rotate(90deg);
+}
+
 /* Proxy row below API URL input */
 .proxy-row {
     display: flex;
     align-items: center;
     gap: 6px;
     margin-top: 4px;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height 0.25s ease, opacity 0.2s ease, margin-top 0.25s ease;
+}
+
+.proxy-row:not(.collapsed) {
+    max-height: 50px;
+    opacity: 1;
 }
 
 .proxy-row input {
     flex: 1;
     min-width: 0;
     padding: 6px 10px;
-    border: 1.5px solid #fbbf24;
+    border: 1.5px solid #cfe6ff;
     border-radius: 8px;
     font-size: 13px;
     outline: none;
     transition: border-color .2s ease;
-    background: #fffbeb;
+    background: #fff;
 }
 
 .proxy-row input:focus {
-    border-color: #f59e0b;
+    border-color: #1e90ff;
 }
 
 .proxy-label {
     font-size: 12px;
-    color: #92400e;
+    color: #475569;
     font-weight: 600;
     white-space: nowrap;
-    background: #fef3c7;
+    background: #e7f2ff;
     padding: 2px 6px;
     border-radius: 4px;
+    border: 1px solid #cfe6ff;
 }
 
 /* Proxy row warning state (http:// URL with no proxy configured) */
@@ -1733,6 +1769,13 @@ body {
 .proxy-row-warning .proxy-label {
     background: #fee2e2;
     color: #991b1b;
+    border-color: #fca5a5;
+}
+
+/* Auto-expand proxy row when in warning state */
+.proxy-row-warning.collapsed {
+    max-height: 50px;
+    opacity: 1;
 }
 
 @keyframes proxy-row-pulse {

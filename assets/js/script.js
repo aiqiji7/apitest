@@ -47,6 +47,7 @@
   const httpProxyUrlEl = $('#httpProxyUrl');
   const httpProxyRowEl = $('#httpProxyRow');
   const httpWarningIconEl = $('#httpWarningIcon');
+  const proxyToggleEl = $('#proxyToggle');
   const thinkingToggleEl = $('#thinkingToggle');
   const effortSelectBtn = $('#effortSelectBtn');
   const effortDropdown = $('#effortDropdown');
@@ -1931,8 +1932,29 @@
     }
   });
 
+  // 模型输入框输入时，过滤已缓存的模型列表
+  modelEl.addEventListener('input', () => {
+    updateThinkingUI();
+    const currentCachedModels = getCurrentCachedModels();
+    if (currentCachedModels.length > 0) {
+      const filterText = (modelEl.value || '').trim().toLowerCase();
+      if (filterText) {
+        const filtered = currentCachedModels.filter(m => {
+          const id = (m.id || m.name || '').toLowerCase();
+          return id.includes(filterText);
+        });
+        if (filtered.length > 0) {
+          renderModelDropdown(filtered);
+        } else {
+          renderModelDropdownEmpty('无匹配模型');
+        }
+      } else {
+        renderModelDropdown(currentCachedModels);
+      }
+    }
+  });
+
   // Thinking controls event handlers
-  modelEl.addEventListener('input', updateThinkingUI);
   thinkingToggleEl.addEventListener('change', function() {
     effortSelectWrapper.style.display = this.checked ? '' : 'none';
   });
@@ -4368,15 +4390,24 @@
     const apiUrl = apiUrlEl.value.trim();
     const isHttp = apiUrl.toLowerCase().startsWith('http://');
     const hasProxy = !!getProxyUrl();
+    const isWarning = isHttp && !hasProxy;
 
     // Show warning icon when http:// but no proxy configured
     if (httpWarningIconEl) {
-      httpWarningIconEl.style.display = (isHttp && !hasProxy) ? '' : 'none';
+      httpWarningIconEl.style.display = isWarning ? '' : 'none';
     }
 
     // Highlight proxy row when http:// (warning state)
     if (httpProxyRowEl) {
-      httpProxyRowEl.classList.toggle('proxy-row-warning', isHttp && !hasProxy);
+      httpProxyRowEl.classList.toggle('proxy-row-warning', isWarning);
+      // Auto-expand proxy row when warning state is active
+      if (isWarning && httpProxyRowEl.classList.contains('collapsed')) {
+        httpProxyRowEl.classList.remove('collapsed');
+        if (proxyToggleEl) {
+          proxyToggleEl.classList.add('expanded');
+          proxyToggleEl.setAttribute('aria-expanded', 'true');
+        }
+      }
     }
   }
 
@@ -4398,6 +4429,30 @@
     httpProxyUrlEl.addEventListener('change', () => {
       saveProxyUrl(httpProxyUrlEl.value.trim());
       updateHttpProxyUI();
+    });
+  }
+
+  // Proxy toggle: expand/collapse proxy row
+  if (proxyToggleEl && httpProxyRowEl) {
+    function toggleProxyRow(expand) {
+      const isExpanded = expand !== undefined ? expand : httpProxyRowEl.classList.contains('collapsed');
+      if (isExpanded) {
+        httpProxyRowEl.classList.remove('collapsed');
+        proxyToggleEl.classList.add('expanded');
+        proxyToggleEl.setAttribute('aria-expanded', 'true');
+      } else {
+        httpProxyRowEl.classList.add('collapsed');
+        proxyToggleEl.classList.remove('expanded');
+        proxyToggleEl.setAttribute('aria-expanded', 'false');
+      }
+    }
+
+    proxyToggleEl.addEventListener('click', () => toggleProxyRow());
+    proxyToggleEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleProxyRow();
+      }
     });
   }
 
