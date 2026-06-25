@@ -141,6 +141,30 @@ function findModelConfig(modelName) {
 
 ---
 
+### Pattern: Release Date Gating
+
+For models that have different capabilities based on release date (e.g., OpenAI `gpt-5.1` needs date >= 2025-11-13):
+
+```js
+function isModelAfterDate(modelName, dateStr) {
+  var dateMatch = modelName.match(/(\d{4}-\d{2}-\d{2})/);
+  if (!dateMatch) return true; // No date = assume new enough
+  return dateMatch[1] >= dateStr;
+}
+
+// In MODEL_CATALOG:
+{ pattern: /gpt-5\.1/i, levels: ['none','low','medium','high'], def: 'none', param: 'reasoning_effort', minDate: '2025-11-13' },
+
+// In matchModelCatalog():
+if (entry.minDate && !isModelAfterDate(modelName, entry.minDate)) {
+  continue; // Skip this entry, try next
+}
+```
+
+**Why**: Some model variants only support certain features after specific release dates. Date gating ensures correct behavior for both old and new model versions.
+
+---
+
 ### Pattern: Toggle + Conditional Dropdown UI
 
 For optional settings that show/hide based on context:
