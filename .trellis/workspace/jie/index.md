@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-06-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~524 | Active |
+| `journal-1.md` | ~557 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-06-25 | UI改进：HTTPS代理框折叠+模型搜索 | `6dd0924` | `main` |
 | 15 | 2026-06-25 | 模型思考等级/推理强度设置功能完成 | `01236b1`, `f793949`, `889f360`, `5349099`, `afcf1db`, `e2a03a2` | `main` |
 | 14 | 2026-06-24 | 添加 OpenAI Juice 值测试场景 | `0a6740c` | `main` |
 | 13 | 2026-06-24 | HTTP API 自动代理功能 | `8bede06` | `main` |

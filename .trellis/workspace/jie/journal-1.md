@@ -522,3 +522,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: UI改进：HTTPS代理框折叠+模型搜索
+
+**Date**: 2026-06-25
+**Task**: UI改进：HTTPS代理框折叠+模型搜索
+**Branch**: `main`
+
+### Summary
+
+实现两项UI改进：1) HTTPS代理框默认折叠，移除黄色设计改为中性风格；2) 模型输入框增加实时搜索过滤功能
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6dd0924` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
