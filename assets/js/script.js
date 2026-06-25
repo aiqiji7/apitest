@@ -482,6 +482,7 @@
     apiUrlEl.value = cfg.url || SYSTEM_DEFAULTS.apiUrl;
     apiKeyEl.value = cfg.key || SYSTEM_DEFAULTS.apiKey;
     modelEl.value = cfg.model || SYSTEM_DEFAULTS.model;
+    modelEl.dispatchEvent(new Event('input', { bubbles: true }));
     updateRecentConnectionsButtonState();
     updateHttpProxyUI();
   }
@@ -489,6 +490,7 @@
     apiUrlEl.value = SYSTEM_DEFAULTS.apiUrl;
     apiKeyEl.value = SYSTEM_DEFAULTS.apiKey;
     modelEl.value = SYSTEM_DEFAULTS.model;
+    modelEl.dispatchEvent(new Event('input', { bubbles: true }));
     updateRecentConnectionsButtonState();
     updateHttpProxyUI();
   }
@@ -743,6 +745,7 @@
       apiUrlEl.value = cfg.url || '';
       apiKeyEl.value = cfg.key || '';
       modelEl.value = cfg.model || SYSTEM_DEFAULTS.model;
+      modelEl.dispatchEvent(new Event('input', { bubbles: true }));
       updateRecentConnectionsButtonState();
       updateHttpProxyUI();
       configModal.classList.remove('open');
@@ -1993,6 +1996,7 @@
           apiUrlEl.value = entry.url;
           apiKeyEl.value = entry.key;
           modelEl.value = entry.model;
+          modelEl.dispatchEvent(new Event('input', { bubbles: true }));
           updateHttpProxyUI();
         }
         closeRecentDropdown();
