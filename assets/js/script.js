@@ -1003,11 +1003,11 @@
   var MODEL_CATALOG = [
     // OpenAI — ordered from specific to generic
     { pattern: /gpt-5-pro/i, levels: ['high'], def: 'high', param: 'reasoning_effort' },
-    { pattern: /gpt-5\.?1-codex-max/i, levels: ['low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
-    { pattern: /gpt-5\.?2-pro/i, levels: ['medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
-    { pattern: /gpt-5\.?2/i, levels: ['none','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
-    { pattern: /gpt-5\.?5/i, levels: ['none','minimal','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
-    { pattern: /gpt-5\.?1/i, levels: ['none','low','medium','high'], def: 'none', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.1-codex-max/i, levels: ['low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.2-pro/i, levels: ['medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.2/i, levels: ['none','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort', minDate: '2025-12-11' },
+    { pattern: /gpt-5\.5/i, levels: ['none','minimal','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.1/i, levels: ['none','low','medium','high'], def: 'none', param: 'reasoning_effort', minDate: '2025-11-13' },
     { pattern: /gpt-5/i, levels: ['minimal','low','medium','high'], def: 'medium', param: 'reasoning_effort' },
     { pattern: /\bo[134](?:[^a-z0-9]|$)/i, levels: ['low','medium','high'], def: 'medium', param: 'reasoning_effort' },
     { pattern: /gpt-/i, levels: ['minimal','low','medium','high'], def: 'medium', param: 'reasoning_effort' },
@@ -1020,13 +1020,40 @@
     { pattern: /gemini-3/i, levels: ['minimal','low','medium','high'], def: 'high', param: 'thinking_level', noToggle: true },
     { pattern: /gemini-/i, levels: ['low','medium','high'], def: 'high', param: 'thinking_budget' },
     // Grok
-    { pattern: /grok-/i, levels: ['none','low','medium','high'], def: 'low', param: 'reasoning_effort' }
+    { pattern: /grok-/i, levels: ['none','low','medium','high'], def: 'low', param: 'reasoning_effort' },
+    // Mistral — reasoning_effort compatible
+    { pattern: /mistral-/i, levels: ['none','low','medium','high'], def: 'medium', param: 'reasoning_effort' },
+    // Amazon Nova — nested reasoningConfig
+    { pattern: /amazon\.nova-/i, levels: ['low','medium','high'], def: 'medium', param: 'nova_reasoning' },
+    // Qwen (通义千问) — enable_thinking + thinking_budget
+    { pattern: /qwen-/i, levels: ['disabled','low','medium','high','max'], def: 'medium', param: 'qwen_thinking' },
+    { pattern: /qwq-/i, levels: ['disabled','low','medium','high','max'], def: 'medium', param: 'qwen_thinking' },
+    // GLM (智谱) — thinking.type toggle
+    { pattern: /glm-/i, levels: ['disabled','enabled'], def: 'enabled', param: 'glm_thinking' },
+    // Kimi (月之暗面) — thinking.type toggle
+    { pattern: /kimi-/i, levels: ['disabled','enabled','high'], def: 'enabled', param: 'kimi_thinking' },
+    // Cohere — thinking + budget
+    { pattern: /command-a-/i, levels: ['disabled','low','medium','high'], def: 'medium', param: 'cohere_thinking' }
   ];
+
+  function isModelAfterDate(modelName, dateStr) {
+    // Extract date from model name patterns like "gpt-5-2025-08-07" or "o3-2025-04-16"
+    var dateMatch = modelName.match(/(\d{4}-\d{2}-\d{2})/);
+    if (!dateMatch) return true; // No date = assume new enough
+    return dateMatch[1] >= dateStr;
+  }
 
   function matchModelCatalog(modelName) {
     if (!modelName) return null;
     for (var i = 0; i < MODEL_CATALOG.length; i++) {
-      if (MODEL_CATALOG[i].pattern.test(modelName)) return MODEL_CATALOG[i];
+      var entry = MODEL_CATALOG[i];
+      if (entry.pattern.test(modelName)) {
+        // Check date gating
+        if (entry.minDate && !isModelAfterDate(modelName, entry.minDate)) {
+          continue; // Skip this entry, try next
+        }
+        return entry;
+      }
     }
     return null;
   }
@@ -1044,7 +1071,7 @@
     var entry = matchModelCatalog(modelName);
     if (!entry) return {};
 
-    var budgetMap, gBudgetMap; // hoisted for use in cases
+    var budgetMap, gBudgetMap, qwenBudgetMap, cohereBudgetMap; // hoisted for use in cases
 
     switch (entry.param) {
       case 'reasoning_effort':
@@ -1064,6 +1091,22 @@
       case 'thinking_budget':
         gBudgetMap = { low: 1024, medium: 4096, high: 16384 };
         return { thinkingConfig: { thinkingBudget: gBudgetMap[level] || 4096 } };
+      case 'nova_reasoning':
+        return { reasoningConfig: { type: 'enabled', maxReasoningEffort: level } };
+      case 'qwen_thinking':
+        if (level === 'disabled') return { enable_thinking: false };
+        qwenBudgetMap = { low: 1024, medium: 4096, high: 16384, max: 32768 };
+        return { enable_thinking: true, thinking_budget: qwenBudgetMap[level] || 4096 };
+      case 'glm_thinking':
+        return { thinking: { type: level === 'disabled' ? 'disabled' : 'enabled' } };
+      case 'kimi_thinking':
+        if (level === 'disabled') return { thinking: { type: 'disabled' } };
+        if (level === 'high') return { thinking: { type: 'enabled', keep: true } };
+        return { thinking: { type: 'enabled' } };
+      case 'cohere_thinking':
+        if (level === 'disabled') return { thinking: { type: 'disabled' } };
+        cohereBudgetMap = { low: 1024, medium: 4096, high: 16384 };
+        return { thinking: { type: 'enabled', budget_tokens: cohereBudgetMap[level] || 4096 } };
       default:
         return {};
     }
@@ -1077,7 +1120,8 @@
     return { reasoning: { effort: level } };
   }
 
-  // Ensure max_tokens > budget_tokens for Anthropic Claude 3.x (budget_tokens must be < max_tokens)
+  // Ensure max_tokens > budget_tokens for providers using thinking.budget_tokens
+  // (Anthropic Claude 3.x, Cohere command-a, etc.) — budget_tokens must be < max_tokens
   function ensureAnthropicMaxTokens(requestBody) {
     if (requestBody.thinking && requestBody.thinking.budget_tokens) {
       var budget = requestBody.thinking.budget_tokens;
