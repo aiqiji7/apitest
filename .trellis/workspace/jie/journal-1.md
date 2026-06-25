@@ -484,3 +484,41 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: 模型思考等级/推理强度设置功能完成
+
+**Date**: 2026-06-25
+**Task**: 模型思考等级/推理强度设置功能完成
+**Branch**: `main`
+
+### Summary
+
+完成模型思考等级/推理强度设置功能，支持 6 个提供商（OpenAI、Claude、DeepSeek、Gemini、Grok）的 14 个模型模式。新增 Mistral、Amazon Nova、Qwen、GLM、Kimi、Cohere 等模型支持。添加发布日期门控功能。修复模型列表和最近连接选择后思考等级不更新的问题。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `01236b1` | (see git log) |
+| `f793949` | (see git log) |
+| `889f360` | (see git log) |
+| `5349099` | (see git log) |
+| `afcf1db` | (see git log) |
+| `e2a03a2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
