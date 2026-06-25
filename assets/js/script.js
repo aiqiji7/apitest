@@ -1792,6 +1792,7 @@
     modelDropdown.querySelectorAll('.model-dropdown-item').forEach(el => {
       el.addEventListener('click', () => {
         modelEl.value = el.dataset.model;
+        modelEl.dispatchEvent(new Event('input', { bubbles: true }));
         closeModelDropdown();
       });
     });
