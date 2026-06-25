@@ -47,6 +47,11 @@
   const httpProxyUrlEl = $('#httpProxyUrl');
   const httpProxyRowEl = $('#httpProxyRow');
   const httpWarningIconEl = $('#httpWarningIcon');
+  const thinkingToggleEl = $('#thinkingToggle');
+  const effortSelectBtn = $('#effortSelectBtn');
+  const effortDropdown = $('#effortDropdown');
+  const effortSelectWrapper = $('#effortSelectWrapper');
+  var effortSelectedValue = '';
 
   // Image state
   let currentImageData = null; // base64 data URL or external URL string
@@ -888,6 +893,8 @@
     updateRecentConnectionsButtonState();
     updateClearBtnState();
     updateHttpProxyUI();
+    // 初始化思考等级 UI（需在模型值加载完成后调用）
+    updateThinkingUI();
   });
 
   const IQ_TESTS = {
@@ -991,6 +998,135 @@
     return !streamToggleEl || streamToggleEl.checked;
   }
 
+  // Thinking/Reasoning effort helpers — per-model catalog approach (ai-toolbox pattern)
+  // Each entry: { pattern: RegExp, levels: [string], default: string, param: string, noToggle?: bool }
+  var MODEL_CATALOG = [
+    // OpenAI — ordered from specific to generic
+    { pattern: /gpt-5-pro/i, levels: ['high'], def: 'high', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.?1-codex-max/i, levels: ['low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.?2-pro/i, levels: ['medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.?2/i, levels: ['none','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.?5/i, levels: ['none','minimal','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.?1/i, levels: ['none','low','medium','high'], def: 'none', param: 'reasoning_effort' },
+    { pattern: /gpt-5/i, levels: ['minimal','low','medium','high'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /\bo[134](?:[^a-z0-9]|$)/i, levels: ['low','medium','high'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /gpt-/i, levels: ['minimal','low','medium','high'], def: 'medium', param: 'reasoning_effort' },
+    // Anthropic
+    { pattern: /claude-3/i, levels: ['low','medium','high','xhigh','max'], def: 'medium', param: 'budget_tokens' },
+    { pattern: /claude-/i, levels: ['low','medium','high','xhigh','max'], def: 'medium', param: 'adaptive' },
+    // DeepSeek
+    { pattern: /deepseek-/i, levels: ['none','high','max'], def: 'none', param: 'deepseek_reasoning' },
+    // Gemini
+    { pattern: /gemini-3/i, levels: ['minimal','low','medium','high'], def: 'high', param: 'thinking_level', noToggle: true },
+    { pattern: /gemini-/i, levels: ['low','medium','high'], def: 'high', param: 'thinking_budget' },
+    // Grok
+    { pattern: /grok-/i, levels: ['none','low','medium','high'], def: 'low', param: 'reasoning_effort' }
+  ];
+
+  function matchModelCatalog(modelName) {
+    if (!modelName) return null;
+    for (var i = 0; i < MODEL_CATALOG.length; i++) {
+      if (MODEL_CATALOG[i].pattern.test(modelName)) return MODEL_CATALOG[i];
+    }
+    return null;
+  }
+
+  function getEffortLevels(modelName) {
+    var entry = matchModelCatalog(modelName);
+    if (!entry) return [];
+    return entry.levels.map(function(l) {
+      return { value: l, label: l.charAt(0).toUpperCase() + l.slice(1) };
+    });
+  }
+
+  function buildThinkingParams(modelName, level) {
+    if (!level) return {};
+    var entry = matchModelCatalog(modelName);
+    if (!entry) return {};
+
+    var budgetMap, gBudgetMap; // hoisted for use in cases
+
+    switch (entry.param) {
+      case 'reasoning_effort':
+        return { reasoning_effort: level };
+      case 'deepseek_reasoning':
+        // DeepSeek requires both reasoning_effort and thinking.type: "enabled"
+        // When level is "none", omit thinking params entirely (disables thinking mode)
+        if (level === 'none') return {};
+        return { reasoning_effort: level, thinking: { type: 'enabled' } };
+      case 'budget_tokens':
+        budgetMap = { low: 1024, medium: 4096, high: 16384, xhigh: 32768, max: 32768 };
+        return { thinking: { type: 'enabled', budget_tokens: budgetMap[level] || 4096 } };
+      case 'adaptive':
+        return { thinking: { type: 'adaptive' }, output_config: { effort: level } };
+      case 'thinking_level':
+        return { thinkingConfig: { thinkingLevel: level } };
+      case 'thinking_budget':
+        gBudgetMap = { low: 1024, medium: 4096, high: 16384 };
+        return { thinkingConfig: { thinkingBudget: gBudgetMap[level] || 4096 } };
+      default:
+        return {};
+    }
+  }
+
+  function buildResponsesThinkingParams(modelName, level) {
+    if (!level) return {};
+    var entry = matchModelCatalog(modelName);
+    // Only Responses-format models (OpenAI) use nested reasoning.effort
+    if (!entry || entry.param !== 'reasoning_effort') return {};
+    return { reasoning: { effort: level } };
+  }
+
+  // Ensure max_tokens > budget_tokens for Anthropic Claude 3.x (budget_tokens must be < max_tokens)
+  function ensureAnthropicMaxTokens(requestBody) {
+    if (requestBody.thinking && requestBody.thinking.budget_tokens) {
+      var budget = requestBody.thinking.budget_tokens;
+      var currentMax = requestBody.max_tokens || 4096;
+      // max_tokens must be strictly greater than budget_tokens
+      if (currentMax <= budget) {
+        requestBody.max_tokens = budget + 1024;
+      }
+    }
+  }
+
+  function updateThinkingUI() {
+    var model = (modelEl.value || '').trim();
+    var entry = matchModelCatalog(model);
+    var levels = getEffortLevels(model);
+    // Populate custom dropdown (handlers bound once via delegation below)
+    effortDropdown.innerHTML = levels.map(function(l) {
+      return '<div class="effort-dropdown-item" data-value="' + l.value + '">' + l.label + '</div>';
+    }).join('');
+    // Set default selection
+    if (levels.length > 0) {
+      var def = entry ? entry.def : levels[0].value;
+      effortSelectedValue = def;
+      effortSelectBtn.textContent = def.charAt(0).toUpperCase() + def.slice(1);
+    } else {
+      // No matching model — clear effort state so no stale params leak
+      effortSelectedValue = '';
+      effortSelectBtn.textContent = '';
+    }
+    // Hide both toggle and effort dropdown when model not in catalog
+    var hasLevels = levels.length > 0;
+    var showToggle = hasLevels && (entry ? !entry.noToggle : true);
+    var toggleLabel = thinkingToggleEl.parentElement;
+    if (toggleLabel) toggleLabel.style.display = showToggle ? '' : 'none';
+    if (!showToggle && hasLevels) {
+      // noToggle model (e.g. Gemini 3) — always show dropdown, force toggle on
+      thinkingToggleEl.checked = true;
+      effortSelectWrapper.style.display = '';
+    } else if (!hasLevels) {
+      // Unknown model — uncheck toggle and hide dropdown
+      thinkingToggleEl.checked = false;
+      effortSelectWrapper.style.display = 'none';
+    } else {
+      var visible = thinkingToggleEl.checked ? '' : 'none';
+      effortSelectWrapper.style.display = visible;
+    }
+  }
+
+
   // Phase label mapping for fetchAndStream onPhase callback
   const PHASE_LABELS = {
     'waiting_response': '等待响应...',
@@ -1081,6 +1217,11 @@
         messages: [{ role: 'user', content: userText }],
         stream: isStreamEnabled()
       };
+      if (thinkingToggleEl.checked && effortSelectedValue) {
+        var tParams = buildThinkingParams(model, effortSelectedValue);
+        Object.assign(requestBody, tParams);
+        ensureAnthropicMaxTokens(requestBody);
+      }
       requestHeaders = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' };
       url = anthropicEndpoint;
       userMessagePayload = requestBody.messages[0];
@@ -1089,6 +1230,11 @@
         contents: [{ role: 'user', parts: [{ text: userText }] }],
         stream: isStreamEnabled()
       };
+      if (thinkingToggleEl.checked && effortSelectedValue) {
+        var gParams = buildThinkingParams(model, effortSelectedValue);
+        if (!requestBody.generationConfig) requestBody.generationConfig = {};
+        Object.assign(requestBody.generationConfig, gParams);
+      }
       requestHeaders = { 'Content-Type': 'application/json' };
       url = isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint;
       userMessagePayload = requestBody.contents[0];
@@ -1099,6 +1245,10 @@
         input: [{ role: 'user', content: userText }],
         stream: isStreamEnabled()
       };
+      if (thinkingToggleEl.checked && effortSelectedValue) {
+        var rParams = buildResponsesThinkingParams(model, effortSelectedValue);
+        Object.assign(requestBody, rParams);
+      }
       requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
       url = responsesEndpoint;
       userMessagePayload = requestBody.input[0];
@@ -1108,6 +1258,10 @@
         messages: [{ role: 'user', content: userText }],
         stream: isStreamEnabled()
       };
+      if (thinkingToggleEl.checked && effortSelectedValue) {
+        var cParams = buildThinkingParams(model, effortSelectedValue);
+        Object.assign(requestBody, cParams);
+      }
       requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
       url = endpoint;
       userMessagePayload = requestBody.messages[0];
@@ -1729,6 +1883,33 @@
     }
   });
 
+  // Thinking controls event handlers
+  modelEl.addEventListener('input', updateThinkingUI);
+  thinkingToggleEl.addEventListener('change', function() {
+    effortSelectWrapper.style.display = this.checked ? '' : 'none';
+  });
+  // Effort dropdown toggle with fixed positioning
+  effortSelectBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (effortDropdown.style.display === 'none' || !effortDropdown.style.display) {
+      effortDropdown.style.display = '';
+    } else {
+      effortDropdown.style.display = 'none';
+    }
+  });
+  // Effort dropdown item selection via event delegation (bound once, no accumulation)
+  effortDropdown.addEventListener('click', function(e) {
+    var item = e.target.closest('.effort-dropdown-item');
+    if (!item) return;
+    e.stopPropagation();
+    effortSelectedValue = item.dataset.value;
+    effortSelectBtn.textContent = item.textContent;
+    effortDropdown.style.display = 'none';
+  });
+  // Close effort dropdown on outside click
+  document.addEventListener('click', function() {
+    effortDropdown.style.display = 'none';
+  });
   // ---- 最近连接下拉 ----
   function renderRecentDropdown(filterText) {
     const conns = loadRecentConnections();
@@ -1997,6 +2178,10 @@
         const MAX_TURNS = 3;
         while (turn <= MAX_TURNS) {
           const requestBody = { model, messages, tools, tool_choice: 'auto', stream: isStreamEnabled() };
+          if (thinkingToggleEl.checked && effortSelectedValue) {
+            var thParams = buildThinkingParams(model, effortSelectedValue);
+            Object.assign(requestBody, thParams);
+          }
           const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
           addRequestBlock(`请求 #${turn}`, requestBody, requestHeaders);
 
@@ -2193,6 +2378,11 @@
             system: A_SYSTEM_INSTRUCTION,
             stream: isStreamEnabled()
           };
+          if (thinkingToggleEl.checked && effortSelectedValue) {
+            var thParams = buildThinkingParams(model, effortSelectedValue);
+            Object.assign(aReq, thParams);
+            ensureAnthropicMaxTokens(aReq);
+          }
           const requestHeaders = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' };
           addRequestBlock(`请求 #${turn}`, aReq, requestHeaders);
           const aTStart = Date.now();
@@ -2393,6 +2583,11 @@
             contents,
             stream: isStreamEnabled()
           };
+          if (thinkingToggleEl.checked && effortSelectedValue) {
+            var thParams = buildThinkingParams(model, effortSelectedValue);
+            if (!gReq.generationConfig) gReq.generationConfig = {};
+            Object.assign(gReq.generationConfig, thParams);
+          }
           const requestHeaders = { 'Content-Type': 'application/json' };
           addRequestBlock(`请求 #${turn}`, gReq, requestHeaders);
 
@@ -2588,6 +2783,10 @@
         const MAX_TURNS = 3;
         while (turn <= MAX_TURNS) {
           const rtReq = { model, tools, input: history, instructions: '你不仅能够调用 convert_base 工具，还必须在得到最终计算结果后调用 submit_answer 工具来提交最终答案。', stream: isStreamEnabled() };
+          if (thinkingToggleEl.checked && effortSelectedValue) {
+            var thParams = buildResponsesThinkingParams(model, effortSelectedValue);
+            Object.assign(rtReq, thParams);
+          }
           const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
           addRequestBlock(`请求 #${turn}`, rtReq, requestHeaders);
 
@@ -2774,6 +2973,10 @@
           input: [{ role: 'user', content: userText || '搜索当前最新的Gemini旗舰模型是？' }],
           stream: isStreamEnabled()
         };
+        if (thinkingToggleEl.checked && effortSelectedValue) {
+          var thParams = buildResponsesThinkingParams(model, effortSelectedValue);
+          Object.assign(rReq, thParams);
+        }
         const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
         addRequestBlock('请求 #1', rReq, requestHeaders);
         addMessage('user', '用户消息', rReq.input[0]);
@@ -2858,6 +3061,11 @@
           contents: [{ role: 'user', parts: [{ text: userText || '搜索当前最新的Gemini旗舰模型是？' }] }],
           stream: isStreamEnabled()
         };
+        if (thinkingToggleEl.checked && effortSelectedValue) {
+          var thParams = buildThinkingParams(model, effortSelectedValue);
+          if (!gReq.generationConfig) gReq.generationConfig = {};
+          Object.assign(gReq.generationConfig, thParams);
+        }
         const requestHeaders = { 'Content-Type': 'application/json' };
         addRequestBlock('请求 #1', gReq, requestHeaders);
         addMessage('user', '用户消息', gReq.contents[0]);
@@ -2920,6 +3128,11 @@
           contents: [{ role: 'user', parts: [{ text: userText || '这个工具有哪些特点？https://ai.google.dev/gemini-api/docs/url-context' }] }],
           stream: isStreamEnabled()
         };
+        if (thinkingToggleEl.checked && effortSelectedValue) {
+          var thParams = buildThinkingParams(model, effortSelectedValue);
+          if (!gReq.generationConfig) gReq.generationConfig = {};
+          Object.assign(gReq.generationConfig, thParams);
+        }
         const requestHeaders = { 'Content-Type': 'application/json' };
         addRequestBlock('请求 #1', gReq, requestHeaders);
         addMessage('user', '用户消息', gReq.contents[0]);
@@ -2998,6 +3211,16 @@
           oReq = { model, messages: [{ role: 'user', content: contentParts }], stream: isStreamEnabled() };
           requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
           imageUrl = endpoint;
+        }
+
+        if (thinkingToggleEl.checked && effortSelectedValue) {
+          var thParams;
+          if (openaiProtocol === 'responses') {
+            thParams = buildResponsesThinkingParams(model, effortSelectedValue);
+          } else {
+            thParams = buildThinkingParams(model, effortSelectedValue);
+          }
+          Object.assign(oReq, thParams);
         }
 
         addRequestBlock('请求 #1', oReq, requestHeaders);
@@ -3088,6 +3311,11 @@
           }],
           stream: isStreamEnabled()
         };
+        if (thinkingToggleEl.checked && effortSelectedValue) {
+          var thParams = buildThinkingParams(model, effortSelectedValue);
+          Object.assign(aReq, thParams);
+          ensureAnthropicMaxTokens(aReq);
+        }
         const requestHeaders = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' };
         addRequestBlock('请求 #1', aReq, requestHeaders);
         addMessage('user', '用户消息', aReq.messages[0].content);
@@ -3161,6 +3389,11 @@
           }],
           stream: isStreamEnabled()
         };
+        if (thinkingToggleEl.checked && effortSelectedValue) {
+          var thParams = buildThinkingParams(model, effortSelectedValue);
+          if (!gReq.generationConfig) gReq.generationConfig = {};
+          Object.assign(gReq.generationConfig, thParams);
+        }
         const requestHeaders = { 'Content-Type': 'application/json' };
         addRequestBlock('请求 #1', gReq, requestHeaders);
         addMessage('user', '用户消息', gReq.contents[0]);

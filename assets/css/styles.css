@@ -1739,3 +1739,126 @@ body {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.7; }
 }
+
+/* Thinking Controls */
+.thinking-controls { margin-top: 8px; }
+
+.thinking-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Toggle Switch */
+.thinking-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-toggle-label input[type="checkbox"] {
+  display: none;
+}
+
+.toggle-slider {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--border-color, #444);
+  border-radius: 10px;
+  transition: background 0.2s;
+}
+
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.thinking-toggle-label input:checked + .toggle-slider {
+  background: var(--accent-color, #4a9eff);
+}
+
+.thinking-toggle-label input:checked + .toggle-slider::after {
+  transform: translateX(16px);
+}
+
+.toggle-text { font-size: 13px; color: var(--text-secondary, #999); }
+
+/* Effort & Vendor Selects */
+/* Effort Select — custom dropdown */
+.effort-select-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.effort-select-btn {
+  background: #fff;
+  color: #1f2937;
+  border: 1.5px solid #cfe6ff;
+  border-radius: 10px;
+  padding: 6px 28px 6px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  min-width: 90px;
+  text-align: left;
+  position: relative;
+  transition: border-color .2s ease;
+}
+
+.effort-select-btn::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-top-color: #64748b;
+}
+
+.effort-select-btn:focus {
+  outline: none;
+  border-color: #1e90ff;
+}
+
+.effort-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 9999;
+  min-width: 120px;
+  background: #fff;
+  border: 1.5px solid #cfe6ff;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(30, 144, 255, 0.15);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.effort-dropdown-item {
+  padding: 10px 14px;
+  font-size: 14px;
+  color: #1f2937;
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 1px solid #f1f5f9;
+  transition: background 0.15s ease;
+}
+
+.effort-dropdown-item:last-child {
+  border-bottom: none;
+}
+
+.effort-dropdown-item:hover {
+  background: #eff6ff;
+  color: #1e90ff;
+}
