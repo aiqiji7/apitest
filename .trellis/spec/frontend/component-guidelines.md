@@ -137,7 +137,50 @@ function findModelConfig(modelName) {
 - Easy to extend: add new models by appending to array
 - Priority-based: specific patterns before generic
 - Self-documenting: each entry shows supported levels and API format
-- No vendor detection logic needed: model name directly maps to config
+- Most models need no vendor detection: model name directly maps to config
+
+#### Provider-aware exception: same model name, different API payload
+
+Some OpenAI-compatible providers expose the same model name but require different request fields. Keep the model catalog as the primary capability map, then add a small provider-aware branch inside the parameter builder only for the affected `param` mode.
+
+**Scope / Trigger**: Use this when the model capability is model-name based, but the outbound API contract differs by configured API URL.
+
+**Contract example**: GLM models use the same `glm-*` names across Z.AI / BigModel / Aliyun, but thinking parameters differ:
+
+| Provider URL | Enable | Disable | Effort |
+|---|---|---|---|
+| `api.z.ai`, `open.bigmodel.cn` | `thinking: { type: 'enabled' }` | `thinking: { type: 'disabled' }` | top-level `reasoning_effort` for GLM-5.2+ |
+| `dashscope.aliyuncs.com`, `dashscope-intl.aliyuncs.com`, `*.maas.aliyuncs.com` | `enable_thinking: true` | `enable_thinking: false` | top-level `reasoning_effort` for GLM-5.2+ |
+
+**Good/Base/Bad cases**:
+- Good: `glm-5.2` + Aliyun URL + `high` sends `{ enable_thinking: true, reasoning_effort: 'high' }`.
+- Base: `glm-4.6` + BigModel URL + `enabled` sends `{ thinking: { type: 'enabled' } }`.
+- Bad: `glm-5.2` + Aliyun URL sends `{ thinking: { type: 'enabled' } }`; Aliyun documents `enable_thinking`, so the intended toggle may not apply.
+
+```js
+// Specific model capability first
+{ pattern: /glm-5\.2/i, levels: ['disabled','none','minimal','low','medium','high','xhigh','max'], def: 'high', param: 'glm52_thinking' },
+{ pattern: /glm-/i, levels: ['disabled','enabled'], def: 'enabled', param: 'glm_thinking' },
+
+function isAliyunGlmEndpoint(apiUrl) {
+  var url = String(apiUrl || '').toLowerCase();
+  return url.indexOf('dashscope.aliyuncs.com') !== -1
+    || url.indexOf('dashscope-intl.aliyuncs.com') !== -1
+    || url.indexOf('maas.aliyuncs.com') !== -1;
+}
+
+// Provider-aware exception stays inside the param builder.
+if (entry.param === 'glm52_thinking') {
+  if (isAliyunGlmEndpoint(apiUrlEl.value)) {
+    if (level === 'disabled') return { enable_thinking: false };
+    return { enable_thinking: true, reasoning_effort: level };
+  }
+  if (level === 'disabled') return { thinking: { type: 'disabled' } };
+  return { thinking: { type: 'enabled' }, reasoning_effort: level };
+}
+```
+
+**Tests required**: For each provider-aware exception, verify at least one enabled-level request and one disabled request per provider family. Disabled requests must not include effort fields.
 
 ---
 
