@@ -555,3 +555,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: 兼容 GLM 推理参数
+
+**Date**: 2026-06-29
+**Task**: 兼容 GLM 推理参数
+**Branch**: `main`
+
+### Summary
+
+为 GLM-5.2+ 增加 provider-aware thinking/reasoning 参数构造，兼容 Z.AI、BigModel 与阿里云百炼，并记录前端 catalog 的 provider-aware 例外规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7948e12` | (see git log) |
+| `5b16bfa` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
