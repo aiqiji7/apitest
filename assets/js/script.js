@@ -1032,7 +1032,8 @@
     // Qwen (通义千问) — enable_thinking + thinking_budget
     { pattern: /qwen-/i, levels: ['disabled','low','medium','high','max'], def: 'medium', param: 'qwen_thinking' },
     { pattern: /qwq-/i, levels: ['disabled','low','medium','high','max'], def: 'medium', param: 'qwen_thinking' },
-    // GLM (智谱) — thinking.type toggle
+    // GLM (智谱) — provider-specific thinking params; specific versions before generic rule
+    { pattern: /glm-(?:5\.(?:[2-9]|\d{2,})|(?:[6-9]|\d{2,})(?:\.\d+)?)/i, levels: ['disabled','none','minimal','low','medium','high','xhigh','max'], def: 'high', param: 'glm52_thinking' },
     { pattern: /glm-/i, levels: ['disabled','enabled'], def: 'enabled', param: 'glm_thinking' },
     // Kimi (月之暗面) — thinking.type toggle
     { pattern: /kimi-/i, levels: ['disabled','enabled','high'], def: 'enabled', param: 'kimi_thinking' },
@@ -1060,6 +1061,13 @@
       }
     }
     return null;
+  }
+
+  function isAliyunGlmEndpoint(apiUrl) {
+    var url = String(apiUrl || '').toLowerCase();
+    return url.indexOf('dashscope.aliyuncs.com') !== -1
+      || url.indexOf('dashscope-intl.aliyuncs.com') !== -1
+      || url.indexOf('maas.aliyuncs.com') !== -1;
   }
 
   function getEffortLevels(modelName) {
@@ -1101,7 +1109,17 @@
         if (level === 'disabled') return { enable_thinking: false };
         qwenBudgetMap = { low: 1024, medium: 4096, high: 16384, max: 32768 };
         return { enable_thinking: true, thinking_budget: qwenBudgetMap[level] || 4096 };
+      case 'glm52_thinking':
+        if (isAliyunGlmEndpoint(apiUrlEl.value)) {
+          if (level === 'disabled') return { enable_thinking: false };
+          return { enable_thinking: true, reasoning_effort: level };
+        }
+        if (level === 'disabled') return { thinking: { type: 'disabled' } };
+        return { thinking: { type: 'enabled' }, reasoning_effort: level };
       case 'glm_thinking':
+        if (isAliyunGlmEndpoint(apiUrlEl.value)) {
+          return { enable_thinking: level !== 'disabled' };
+        }
         return { thinking: { type: level === 'disabled' ? 'disabled' : 'enabled' } };
       case 'kimi_thinking':
         if (level === 'disabled') return { thinking: { type: 'disabled' } };

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend spec index for this pure-frontend task."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Defines the per-model configuration catalog pattern used by thinking parameter support."}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Defines API request construction and request-debug display conventions."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Includes API response/thinking parsing gotchas and frontend quality constraints."}
+{"file":".trellis/tasks/06-29-glm-model-thinking-compat/research/glm-thinking-compatibility.md","reason":"Research summary for GLM provider/model thinking parameter differences and recommended implementation."}
