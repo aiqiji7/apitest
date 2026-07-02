@@ -1010,6 +1010,7 @@
     { pattern: /gpt-5\.1-codex-max/i, levels: ['low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
     { pattern: /gpt-5\.2-pro/i, levels: ['medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
     { pattern: /gpt-5\.2/i, levels: ['none','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort', minDate: '2025-12-11' },
+    { pattern: /gpt-5\.4/i, levels: ['none','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
     { pattern: /gpt-5\.5/i, levels: ['none','minimal','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
     { pattern: /gpt-5\.1/i, levels: ['none','low','medium','high'], def: 'none', param: 'reasoning_effort', minDate: '2025-11-13' },
     { pattern: /gpt-5/i, levels: ['minimal','low','medium','high'], def: 'medium', param: 'reasoning_effort' },
@@ -1695,7 +1696,7 @@
   function getModelCacheKey(apiUrl, apiKey) {
     const normalizedUrl = normalizeApiUrl(apiUrl);
     const normalizedKey = (apiKey || '').trim();
-    if (!normalizedUrl || !normalizedKey) return '';
+    if (!normalizedUrl) return '';
     return JSON.stringify([normalizedUrl, normalizedKey]);
   }
 
@@ -1712,8 +1713,8 @@
   async function fetchModelsFromEndpoint() {
     const apiUrl = apiUrlEl.value.trim();
     const apiKey = apiKeyEl.value.trim();
-    if (!apiUrl || !apiKey) {
-      renderModelDropdownError('请先填写 API URL 和 API Key');
+    if (!apiUrl) {
+      renderModelDropdownError('请先填写 API URL');
       return;
     }
     const cacheKey = getModelCacheKey(apiUrl, apiKey);
@@ -1734,7 +1735,7 @@
     try {
       const res = await fetch(modelUrl, {
         method,
-        headers: { 'Authorization': `Bearer ${apiKey}` },
+        headers: apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {},
         signal
       });
       if (signal.aborted) return;
