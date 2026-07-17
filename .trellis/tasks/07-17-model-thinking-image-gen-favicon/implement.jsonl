@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend package entry and guideline index"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "MODEL_CATALOG pattern, date gating, provider-aware thinking params"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "fetch/stream phase callbacks and request patterns"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality bar for UI changes"}
+{"file": ".trellis/tasks/07-17-model-thinking-image-gen-favicon/research/thinking-levels-and-images-2026-07.md", "reason": "Latest thinking levels and Images API contracts"}
+{"file": ".trellis/tasks/07-17-model-thinking-image-gen-favicon/design.md", "reason": "Technical design for Images tab and catalog updates"}
+{"file": ".trellis/tasks/07-17-model-thinking-image-gen-favicon/implement.md", "reason": "Ordered implementation checklist"}

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend package entry for quality review"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify catalog patterns and provider-aware exceptions"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Quality and forbidden patterns"}
+{"file": ".trellis/tasks/07-17-model-thinking-image-gen-favicon/prd.md", "reason": "Acceptance criteria AC1–AC9"}
+{"file": ".trellis/tasks/07-17-model-thinking-image-gen-favicon/design.md", "reason": "Design contracts for Images vendor and scenarios"}
+{"file": ".trellis/tasks/07-17-model-thinking-image-gen-favicon/research/thinking-levels-and-images-2026-07.md", "reason": "Evidence for thinking level correctness"}

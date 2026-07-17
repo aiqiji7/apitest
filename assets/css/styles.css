@@ -1415,6 +1415,26 @@ body {
     color: #1e90ff;
 }
 
+.model-dropdown-item.selected {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.model-dropdown-item.selected:hover {
+    background: #bfdbfe;
+    color: #1e3a8a;
+}
+
+.generated-image {
+    display: block;
+    max-width: 100%;
+    max-height: 420px;
+    margin: 8px 12px 12px;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    background: #f8fafc;
+}
+
 .model-dropdown-item .model-id {
     font-weight: 600;
 }

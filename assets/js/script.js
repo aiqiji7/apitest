@@ -153,6 +153,14 @@
     const root = stripTrailingSlash(applyProxy(base));
     return `${root}/v1/responses`;
   }
+  function buildImagesGenerationsEndpoint(base) {
+    const root = stripTrailingSlash(applyProxy(base));
+    return `${root}/v1/images/generations`;
+  }
+  function buildImagesEditsEndpoint(base) {
+    const root = stripTrailingSlash(applyProxy(base));
+    return `${root}/v1/images/edits`;
+  }
 
   // System defaults (single source of truth) with optional env override from window.APP_CONFIG
   const ENV_CFG = (typeof window !== 'undefined' && window.APP_CONFIG && typeof window.APP_CONFIG === 'object') ? window.APP_CONFIG : {};
@@ -931,7 +939,7 @@
     const proto = openaiProtocol; // 'chat_completions' 或 'responses'
     const toolsScenario = proto === 'responses' ? 'responses_tools' : 'openai_tools';
     const searchScenario = 'responses_search'; // 搜索仅 Responses API 支持
-    const imageLabel = '图片支持';
+    const imageLabel = '图片识别';
     const tests = [
       { scenario: toolsScenario, label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
     ];
@@ -960,15 +968,19 @@
     openai: [], // 由 getOpenaiTests() 动态生成
     anthropic: [
       { scenario: 'anthropic_tools', label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
-      { scenario: 'anthropic_image', label: '图片支持', defaultInput: '请描述这张图片' },
+      { scenario: 'anthropic_image', label: '图片识别', defaultInput: '请描述这张图片' },
       ...IQ_TEST_BUTTONS
     ],
     google: [
       { scenario: 'gemini_tools', label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
       { scenario: 'gemini_search', label: '搜索', defaultInput: '搜索当前最新的Gemini旗舰模型是？' },
       { scenario: 'gemini_url_context', label: 'URL 上下文', defaultInput: '这个工具有哪些特点？https://ai.google.dev/gemini-api/docs/url-context' },
-      { scenario: 'gemini_image', label: '图片支持', defaultInput: '请描述这张图片' },
+      { scenario: 'gemini_image', label: '图片识别', defaultInput: '请描述这张图片' },
       ...IQ_TEST_BUTTONS
+    ],
+    images: [
+      { scenario: 'images_generate', label: '文生图', defaultInput: '一只在草地上奔跑的柯基' },
+      { scenario: 'images_edit', label: '图生图', defaultInput: '把这张图改成水彩风格' }
     ]
   };
 
@@ -1011,7 +1023,9 @@
     { pattern: /gpt-5\.2-pro/i, levels: ['medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
     { pattern: /gpt-5\.2/i, levels: ['none','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort', minDate: '2025-12-11' },
     { pattern: /gpt-5\.4/i, levels: ['none','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
-    { pattern: /gpt-5\.5/i, levels: ['none','minimal','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.5-pro/i, levels: ['medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.5/i, levels: ['none','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+    { pattern: /gpt-5\.6/i, levels: ['none','low','medium','high','xhigh','max'], def: 'medium', param: 'reasoning_effort' },
     { pattern: /gpt-5\.1/i, levels: ['none','low','medium','high'], def: 'none', param: 'reasoning_effort', minDate: '2025-11-13' },
     { pattern: /gpt-5/i, levels: ['minimal','low','medium','high'], def: 'medium', param: 'reasoning_effort' },
     { pattern: /\bo[134](?:[^a-z0-9]|$)/i, levels: ['low','medium','high'], def: 'medium', param: 'reasoning_effort' },
@@ -1021,10 +1035,12 @@
     { pattern: /claude-/i, levels: ['low','medium','high','xhigh','max'], def: 'medium', param: 'adaptive' },
     // DeepSeek
     { pattern: /deepseek-/i, levels: ['none','high','max'], def: 'none', param: 'deepseek_reasoning' },
-    // Gemini
+    // Gemini — Pro (3.x) does not support minimal; Flash keeps four levels
+    { pattern: /gemini-3(?:\.\d+)?(?:-|-preview)?pro/i, levels: ['low','medium','high'], def: 'high', param: 'thinking_level', noToggle: true },
     { pattern: /gemini-3/i, levels: ['minimal','low','medium','high'], def: 'high', param: 'thinking_level', noToggle: true },
     { pattern: /gemini-/i, levels: ['low','medium','high'], def: 'high', param: 'thinking_budget' },
     // Grok
+    { pattern: /grok-4\.5/i, levels: ['low','medium','high'], def: 'high', param: 'reasoning_effort' },
     { pattern: /grok-/i, levels: ['none','low','medium','high'], def: 'low', param: 'reasoning_effort' },
     // Mistral — reasoning_effort compatible
     { pattern: /mistral-/i, levels: ['none','low','medium','high'], def: 'medium', param: 'reasoning_effort' },
@@ -1208,8 +1224,126 @@
     };
   }
 
-  // 图片场景列表
-  const IMAGE_SCENARIOS = ['openai_image', 'anthropic_image', 'gemini_image'];
+  // 图片场景列表（需要输入图片的场景；文生图不在此列）
+  const IMAGE_SCENARIOS = ['openai_image', 'anthropic_image', 'gemini_image', 'images_edit'];
+
+  /** MIME → 合理文件扩展名（multipart image 字段用） */
+  function imageMimeToExt(mime) {
+    var m = String(mime || '').toLowerCase();
+    if (m.indexOf('jpeg') !== -1 || m.indexOf('jpg') !== -1) return 'jpg';
+    if (m.indexOf('webp') !== -1) return 'webp';
+    if (m.indexOf('gif') !== -1) return 'gif';
+    if (m.indexOf('png') !== -1) return 'png';
+    return 'png';
+  }
+
+  /** Blob → data URL（JSON 图生图回退用） */
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject(new Error('无法将图片转为 data URL')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /**
+   * 构建 JSON 图生图候选 body（按兼容网关常见字段顺序尝试）。
+   * 1) image: data URL 字符串
+   * 2) image: [data URL]
+   * 3) images: [{ image_url }]
+   */
+  function buildImagesEditJsonBodies(model, prompt, imageRef) {
+    return [
+      { model: model, prompt: prompt, n: 1, size: '1024x1024', image: imageRef },
+      { model: model, prompt: prompt, n: 1, size: '1024x1024', image: [imageRef] },
+      { model: model, prompt: prompt, n: 1, size: '1024x1024', images: [{ image_url: imageRef }] }
+    ];
+  }
+
+  /** data URL 或远程 URL → Blob（图生图 multipart 用） */
+  async function imageDataToBlob(imageData, signal) {
+    if (!imageData) throw new Error('未提供图片数据');
+    if (String(imageData).startsWith('data:')) {
+      const matches = String(imageData).match(/^data:([^;]+);base64,(.+)$/);
+      if (!matches) throw new Error('无法解析 data URL 图片');
+      const mime = matches[1] || 'image/png';
+      const bin = atob(matches[2]);
+      const bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: mime });
+    }
+    try {
+      const res = await fetch(imageData, { signal });
+      if (!res.ok) {
+        var statusLabel = res.statusText
+          ? ('HTTP ' + res.status + ' ' + res.statusText)
+          : ('HTTP ' + res.status);
+        throw new Error(statusLabel);
+      }
+      return await res.blob();
+    } catch (err) {
+      if (err && err.name === 'AbortError') throw err;
+      // 保留已带 HTTP 状态的错误信息；其余按跨域/读取失败处理
+      if (err && typeof err.message === 'string' && /^HTTP\s+\d+/.test(err.message)) throw err;
+      throw new Error('无法从图片 URL 读取二进制（可能跨域），请改用本地上传');
+    }
+  }
+
+  /** 从 Images API 响应渲染生成图，返回成功张数 */
+  function renderGeneratedImages(json) {
+    const items = (json && Array.isArray(json.data)) ? json.data : [];
+    var count = 0;
+    items.forEach(function (item, idx) {
+      if (!item) return;
+      var src = null;
+      if (item.b64_json) {
+        // 仅接受 base64 载荷（含 URL-safe 变体），避免把任意字符串拼进 data URL
+        var b64 = String(item.b64_json).replace(/\s+/g, '');
+        if (!/^[A-Za-z0-9+/_=-]+$/.test(b64)) return;
+        src = 'data:image/png;base64,' + b64;
+      } else if (item.url) {
+        var u = String(item.url);
+        // 仅允许 http(s) / data:image 结果，避免 javascript: 等危险 scheme
+        if (/^https?:\/\//i.test(u) || /^data:image\//i.test(u)) {
+          src = u;
+        }
+      }
+      if (!src) return;
+      count += 1;
+      const card = document.createElement('div');
+      card.className = 'card message assistant';
+      const title = document.createElement('div');
+      title.className = 'title';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const roleEl = document.createElement('span');
+      roleEl.className = 'role';
+      roleEl.textContent = 'assistant';
+      const labelEl = document.createElement('span');
+      labelEl.className = 'label';
+      labelEl.textContent = '· 生成图片 #' + (idx + 1);
+      meta.appendChild(roleEl);
+      meta.appendChild(labelEl);
+      title.appendChild(meta);
+      card.appendChild(title);
+      const img = document.createElement('img');
+      img.className = 'generated-image';
+      img.alt = 'generated image ' + (idx + 1);
+      img.src = src;
+      card.appendChild(img);
+      if (item.revised_prompt) {
+        const note = document.createElement('pre');
+        note.className = 'answer-content';
+        note.textContent = 'revised_prompt: ' + item.revised_prompt;
+        card.appendChild(note);
+      }
+      messageTimeline.appendChild(card);
+    });
+    if (count > 0) updateClearBtnState();
+    return count;
+  }
+
   // 默认测试图片（base64 内嵌，无需网络加载）
   const DEFAULT_TEST_IMAGE = 'data:image/png;base64,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';
 
@@ -1835,12 +1969,14 @@
     });
     unique.sort((a, b) => ((a.id || a.name) || '').localeCompare((b.id || b.name) || ''));
 
+    const currentModel = (modelEl.value || '').trim();
     const refreshRow = `<div class="model-dropdown-refresh"><span class="refresh-icon">↻</span>刷新列表</div>`;
     const itemsHtml = unique.map(m => {
       const id = m.id || m.name || 'unknown';
-      const owned = m.owned_by ? `<span class="model-meta">${m.owned_by}</span>` : '';
-      return `<div class="model-dropdown-item" data-model="${id.replace(/"/g, '&quot;')}">
-        <span class="model-id">${id}</span>${owned}
+      const owned = m.owned_by ? `<span class="model-meta">${escapeHtml(m.owned_by)}</span>` : '';
+      const selectedClass = id === currentModel ? ' selected' : '';
+      return `<div class="model-dropdown-item${selectedClass}" data-model="${escapeHtml(id)}">
+        <span class="model-id">${escapeHtml(id)}</span>${owned}
       </div>`;
     }).join('');
     modelDropdown.innerHTML = refreshRow + itemsHtml;
@@ -2171,7 +2307,13 @@
 
     try {
       requestPending = true; showWaiting();
-      let userText = userInputEl.value.trim() || '当前时间是？';
+      // Images 场景空 prompt 不应回落到「当前时间是？」
+      let userText = userInputEl.value.trim();
+      if (!userText) {
+        if (scenario === 'images_generate') userText = '一只在草地上奔跑的柯基';
+        else if (scenario === 'images_edit') userText = '把这张图改成水彩风格';
+        else userText = '当前时间是？';
+      }
 
       // 如果是工具场景且输入是默认标记，则生成随机题目
       if (['openai_tools', 'anthropic_tools', 'gemini_tools', 'responses_tools'].includes(scenario)) {
@@ -3280,7 +3422,7 @@
         }
       }
       else if (scenario === 'openai_image') {
-        // OpenAI 图片支持测试（单轮，流式）
+        // OpenAI 图片识别测试（单轮，流式）
         let oReq, requestHeaders, imageUrl, contentParts;
 
         if (openaiProtocol === 'responses') {
@@ -3377,7 +3519,7 @@
         }
       }
       else if (scenario === 'anthropic_image') {
-        // Anthropic 图片支持测试（单轮，流式）
+        // Anthropic 图片识别测试（单轮，流式）
         let source;
         if (currentImageData.startsWith('data:')) {
           const matches = currentImageData.match(/^data:(image\/\w+);base64,(.+)$/);
@@ -3457,7 +3599,7 @@
         }
       }
       else if (scenario === 'gemini_image') {
-        // Google Gemini 图片支持测试（单轮，流式）
+        // Google Gemini 图片识别测试（单轮，流式）
         let imagePart;
         if (currentImageData.startsWith('data:')) {
           const matches = currentImageData.match(/^data:(image\/\w+);base64,(.+)$/);
@@ -3533,6 +3675,215 @@
         } catch (streamErr) {
           if (streamErr && streamErr.name === 'AbortError') throw streamErr;
           addBlock('响应 #1', { error: sanitizeSensitiveText(streamErr.message || String(streamErr)) }, 0);
+        }
+      }
+      else if (scenario === 'images_generate') {
+        // OpenAI-compatible 文生图：POST /v1/images/generations（非流式 JSON；不附带 thinking 参数）
+        const genUrl = buildImagesGenerationsEndpoint(apiUrl);
+        const genBody = {
+          model,
+          prompt: userText,
+          n: 1,
+          size: '1024x1024'
+        };
+        const genHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+        addRequestBlock('请求 #1', genBody, genHeaders);
+        addMessage('user', '用户消息', userText);
+        const genStart = Date.now();
+        try {
+          const genResult = await fetchAndStream(genUrl, {
+            method: 'POST',
+            headers: genHeaders,
+            body: JSON.stringify(genBody),
+            signal
+          }, null, createOnPhaseCallback());
+          const genJson = genResult.json || null;
+          if (genJson) {
+            addBlock('响应 #1', genJson, Date.now() - genStart);
+            const rendered = renderGeneratedImages(genJson);
+            if (rendered > 0) {
+              addInlineSuccess(`文生图成功，共 ${rendered} 张`);
+            } else {
+              addInlineError('响应中未找到图片（data[].b64_json / data[].url）');
+            }
+          } else if (genResult.isStreamed) {
+            addBlock('响应 #1', { streamed: true, content: 'Images API 返回了流式响应，当前测试页按非流式 JSON 解析' }, Date.now() - genStart);
+            addInlineError('文生图接口返回了 SSE，请关闭流式或检查网关是否支持 JSON 响应');
+          } else {
+            addInlineError('文生图请求未返回可解析的 JSON');
+          }
+        } catch (genErr) {
+          if (genErr && genErr.name === 'AbortError') throw genErr;
+          addBlock('响应 #1', { error: sanitizeSensitiveText(genErr.message || String(genErr)) }, 0);
+        }
+      }
+      else if (scenario === 'images_edit') {
+        // OpenAI-compatible 图生图：POST /v1/images/edits
+        // 主路径 multipart FormData；失败后回退 JSON（image / image[] / images[].image_url）
+        // 不附 thinking 参数
+        if (!currentImageData) {
+          await appAlert('请先选择一张图片或输入图片 URL');
+          throw new Error('ABORT_SILENT');
+        }
+        const editUrl = buildImagesEditsEndpoint(apiUrl);
+        const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
+        addMessage('user', '用户消息', [
+          { type: 'text', text: userText },
+          { type: 'image_url', image_url: { url: currentImageData.startsWith('data:') ? '[data URL image]' : currentImageData } }
+        ]);
+
+        function truncateImageRefForDisplay(val) {
+          var s = String(val || '');
+          if (s.length > 120) return s.slice(0, 64) + '…[data URL truncated]';
+          return s;
+        }
+
+        function displayImagesEditBody(body) {
+          var out = Object.assign({}, body);
+          if (typeof out.image === 'string') {
+            out.image = truncateImageRefForDisplay(out.image);
+          } else if (Array.isArray(out.image) && out.image[0]) {
+            out.image = [truncateImageRefForDisplay(out.image[0])];
+          } else if (out.images && out.images[0] && out.images[0].image_url) {
+            out.images = [{ image_url: truncateImageRefForDisplay(out.images[0].image_url) }];
+          }
+          return out;
+        }
+
+        async function handleImagesEditSuccess(label, result, startedAt, attemptNote) {
+          const editJson = result.json || null;
+          if (editJson) {
+            addBlock(label, editJson, Date.now() - startedAt);
+            const rendered = renderGeneratedImages(editJson);
+            if (rendered > 0) {
+              addInlineSuccess('图生图成功，共 ' + rendered + ' 张' + (attemptNote ? '（' + attemptNote + '）' : ''));
+              return true;
+            }
+            addInlineError('响应中未找到图片（data[].b64_json / data[].url）');
+            return false;
+          }
+          if (result.isStreamed) {
+            addBlock(label, { streamed: true, content: 'Images API 返回了流式响应，当前测试页按非流式 JSON 解析' }, Date.now() - startedAt);
+            addInlineError('图生图接口返回了 SSE，请关闭流式或检查网关是否支持 JSON 响应');
+            return false;
+          }
+          addInlineError('图生图请求未返回可解析的 JSON');
+          return false;
+        }
+
+        // JSON 回退用的图片引用：优先 data URL / http(s) URL
+        let imageRefForJson = null;
+        if (String(currentImageData).startsWith('data:') || /^https?:\/\//i.test(String(currentImageData))) {
+          imageRefForJson = currentImageData;
+        }
+
+        let imagesEditDone = false;
+        let multipartFailedErr = null;
+        let imageBlob = null;
+
+        // --- 主路径：multipart ---
+        try {
+          imageBlob = await imageDataToBlob(currentImageData, signal);
+        } catch (blobErr) {
+          if (blobErr && blobErr.name === 'AbortError') throw blobErr;
+          multipartFailedErr = blobErr;
+          addInlineInfo('无法构造 multipart 图片（' + sanitizeSensitiveText(blobErr.message || String(blobErr)) + '），将尝试 JSON 回退');
+        }
+
+        if (imageBlob) {
+          const imageFilename = 'input.' + imageMimeToExt(imageBlob.type);
+          const form = new FormData();
+          form.append('model', model);
+          form.append('prompt', userText);
+          form.append('image', imageBlob, imageFilename);
+          form.append('n', '1');
+          form.append('size', '1024x1024');
+          // 故意不设置 Content-Type：FormData 必须由浏览器自动带 multipart boundary
+          addRequestBlock('请求 #1（multipart）', {
+            model,
+            prompt: userText,
+            n: 1,
+            size: '1024x1024',
+            image: '(multipart binary: ' + imageFilename + ')'
+          }, authHeaders);
+          const editStart = Date.now();
+          try {
+            const editResult = await fetchAndStream(editUrl, {
+              method: 'POST',
+              headers: authHeaders,
+              body: form,
+              signal
+            }, null, createOnPhaseCallback());
+            imagesEditDone = await handleImagesEditSuccess('响应 #1（multipart）', editResult, editStart, 'multipart');
+            if (!imagesEditDone) {
+              multipartFailedErr = new Error('multipart 响应未包含图片');
+            }
+          } catch (editErr) {
+            if (editErr && editErr.name === 'AbortError') throw editErr;
+            multipartFailedErr = editErr;
+            addBlock('响应 #1（multipart）', {
+              error: sanitizeSensitiveText(editErr.message || String(editErr)),
+              status: editErr.status || null,
+              raw: editErr.rawText ? sanitizeSensitiveText(String(editErr.rawText).slice(0, 500)) : undefined
+            }, 0);
+          }
+          if (!imagesEditDone && !imageRefForJson) {
+            try { imageRefForJson = await blobToDataUrl(imageBlob); } catch (_) { /* ignore */ }
+          }
+        }
+
+        // --- JSON 回退 ---
+        if (!imagesEditDone) {
+          // 鉴权失败不重试
+          if (multipartFailedErr && (multipartFailedErr.status === 401 || multipartFailedErr.status === 403)) {
+            addInlineError('图生图 multipart 鉴权失败，已跳过 JSON 回退');
+          } else if (!imageRefForJson) {
+            addInlineError('图生图失败，且无法构造 JSON 图片引用' +
+              (multipartFailedErr ? '：' + sanitizeSensitiveText(multipartFailedErr.message || String(multipartFailedErr)) : ''));
+          } else {
+            if (multipartFailedErr) {
+              addInlineInfo('multipart 失败，正在使用 JSON 格式重试图生图…');
+            } else {
+              addInlineInfo('正在使用 JSON 格式请求图生图…');
+            }
+            const jsonBodies = buildImagesEditJsonBodies(model, userText, imageRefForJson);
+            const jsonHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+            var jsonOk = false;
+            var lastJsonErr = null;
+            for (var ji = 0; ji < jsonBodies.length; ji++) {
+              var body = jsonBodies[ji];
+              var reqLabel = '请求 #' + (ji + 2) + '（JSON 回退 ' + (ji + 1) + '/' + jsonBodies.length + '）';
+              var resLabel = '响应 #' + (ji + 2) + '（JSON 回退 ' + (ji + 1) + '/' + jsonBodies.length + '）';
+              addRequestBlock(reqLabel, displayImagesEditBody(body), jsonHeaders);
+              var jsonStart = Date.now();
+              try {
+                var jsonResult = await fetchAndStream(editUrl, {
+                  method: 'POST',
+                  headers: jsonHeaders,
+                  body: JSON.stringify(body),
+                  signal
+                }, null, createOnPhaseCallback());
+                if (await handleImagesEditSuccess(resLabel, jsonResult, jsonStart, 'JSON 回退')) {
+                  jsonOk = true;
+                  break;
+                }
+                lastJsonErr = new Error('JSON 响应未包含图片');
+              } catch (jsonErr) {
+                if (jsonErr && jsonErr.name === 'AbortError') throw jsonErr;
+                lastJsonErr = jsonErr;
+                addBlock(resLabel, {
+                  error: sanitizeSensitiveText(jsonErr.message || String(jsonErr)),
+                  status: jsonErr.status || null,
+                  raw: jsonErr.rawText ? sanitizeSensitiveText(String(jsonErr.rawText).slice(0, 500)) : undefined
+                }, 0);
+                if (jsonErr.status === 401 || jsonErr.status === 403) break;
+              }
+            }
+            if (!jsonOk) {
+              addInlineError('图生图 multipart 与 JSON 回退均未成功' +
+                (lastJsonErr ? '：' + sanitizeSensitiveText(lastJsonErr.message || String(lastJsonErr)) : ''));
+            }
+          }
         }
       }
 

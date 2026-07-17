@@ -123,6 +123,9 @@ const MODEL_CATALOG = [
   // Specific models first (higher priority)
   { pattern: /gpt-5-pro/i, levels: ['high'], default: 'high', param: 'reasoning_effort' },
   { pattern: /gpt-5\.1-codex-max/i, levels: ['low','medium','high','xhigh'], default: 'medium', param: 'reasoning_effort' },
+  { pattern: /gpt-5\.5-pro/i, levels: ['medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+  { pattern: /gpt-5\.5/i, levels: ['none','low','medium','high','xhigh'], def: 'medium', param: 'reasoning_effort' },
+  { pattern: /gpt-5\.6/i, levels: ['none','low','medium','high','xhigh','max'], def: 'medium', param: 'reasoning_effort' },
   // Generic patterns last (lower priority)
   { pattern: /\bgpt-/i, levels: ['minimal','low','medium','high'], default: 'medium', param: 'reasoning_effort' },
   { pattern: /\bo[134](?:[^a-z0-9]|$)/i, levels: ['low','medium','high'], default: 'medium', param: 'reasoning_effort' },
