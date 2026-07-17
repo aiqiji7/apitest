@@ -622,3 +622,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 文生图失败提示与默认提示词
+
+**Date**: 2026-07-17
+**Task**: 文生图失败提示与默认提示词
+**Branch**: `main`
+
+### Summary
+
+文生图 catch 补充 inline 错误（网络/超时/HTTP），避免仅折叠响应块导致误判成功；默认 prompt 改为博物馆图鉴式信息图模板并抽常量共用。本会话未建 Trellis 任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `179cd81` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
