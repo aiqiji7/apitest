@@ -909,6 +909,24 @@
     updateThinkingUI();
   });
 
+  // 文生图默认提示词（场景按钮填充 + 空输入回退共用）
+  const DEFAULT_IMAGES_GENERATE_PROMPT = `请根据{北京故宫}自动生成一张"博物馆图鉴式中文拆解信息图"。
+
+要求整张图兼具真实写实主视觉、结构拆解、中文标注、材质说明、纹样寓意、色彩含义和核心特征总结。你需要根据主题自动判断最合适的主体对象、服饰体系、器物结构、时代风格、关键部件、材质工艺、颜色方案与版式结构，用户无需再提供其他信息。
+
+整体风格应为：国家博物馆展板、历史服饰图鉴、文博专题信息图，而不是普通海报、古风写真、电商详情页或动漫插画。背景采用米白、绢纸白、浅茶色等纸张质感，整体高级、克制、专业、可收藏。
+
+版式固定为：
+- 顶部：中文主标题 + 副标题 + 导语
+- 左侧：结构拆解区，中文引线标注关键部件，并配局部特写
+- 右上：材质 / 工艺 / 质感区，展示真实纹理小样并附说明
+- 右中：纹样 / 色彩 / 寓意区，展示主色板、纹样样本和文化解释
+- 底部：穿着顺序 / 构成流程图 + 核心特征总结
+
+若主题适合人物展示，则以真实人物全身站姿为中央主体；若更适合器物或单体结构，则改为中心主体拆解图，但整体仍保持完整中文信息图形式。所有文字必须为简体中文，清晰、规整、可读，不要乱码、错字、英文或拼音。重点突出真实结构、材质差异、文化说明与图鉴气质。
+
+避免：海报感、影楼感、电商感、动漫感、cosplay感、乱标注、错结构、糊字、假材质、过度装饰。`;
+
   const IQ_TESTS = {
     iq_test_1: {
       label: '模型智商测试题 1',
@@ -979,7 +997,7 @@
       ...IQ_TEST_BUTTONS
     ],
     images: [
-      { scenario: 'images_generate', label: '文生图', defaultInput: '一只在草地上奔跑的柯基' },
+      { scenario: 'images_generate', label: '文生图', defaultInput: DEFAULT_IMAGES_GENERATE_PROMPT },
       { scenario: 'images_edit', label: '图生图', defaultInput: '把这张图改成水彩风格' }
     ]
   };
@@ -2310,7 +2328,7 @@
       // Images 场景空 prompt 不应回落到「当前时间是？」
       let userText = userInputEl.value.trim();
       if (!userText) {
-        if (scenario === 'images_generate') userText = '一只在草地上奔跑的柯基';
+        if (scenario === 'images_generate') userText = DEFAULT_IMAGES_GENERATE_PROMPT;
         else if (scenario === 'images_edit') userText = '把这张图改成水彩风格';
         else userText = '当前时间是？';
       }
@@ -3714,7 +3732,39 @@
           }
         } catch (genErr) {
           if (genErr && genErr.name === 'AbortError') throw genErr;
-          addBlock('响应 #1', { error: sanitizeSensitiveText(genErr.message || String(genErr)) }, 0);
+          const genErrPayload = {
+            error: sanitizeSensitiveText(genErr.message || String(genErr))
+          };
+          if (genErr.status) genErrPayload.status = genErr.status;
+          if (genErr.rawText) genErrPayload.raw = sanitizeSensitiveText(String(genErr.rawText).slice(0, 500));
+          addBlock('响应 #1', genErrPayload, 0);
+          // 失败时必须有醒目 inline 错误：响应块默认折叠，用户不展开会误以为无结果
+          if (genErr && genErr.name === 'FetchNetworkError') {
+            const info = formatNetworkModelError(genErr.url || genUrl, genErr.method || 'POST');
+            addInlineError(info.title, { rawText: info.details.join('\n'), contentType: 'text/plain' });
+          } else if (genErr && genErr.name === 'TimeoutError') {
+            addInlineError('请求超时', {
+              rawText: `${genErr.message || '请求超时'}\n建议：检查 API 服务是否正常响应，或尝试增加超时时间。`,
+              contentType: 'text/plain'
+            });
+          } else if (genErr && genErr.status) {
+            const info = formatHttpModelError({
+              status: genErr.status,
+              statusText: genErr.statusText || '',
+              method: genErr.method || 'POST',
+              url: genErr.url || genUrl,
+              responseBody: genErr.rawText || ''
+            });
+            addInlineError(info.title, {
+              rawText: info.details.join('\n') + (genErr.rawText ? '\n\n' + sanitizeSensitiveText(String(genErr.rawText).slice(0, 500)) : ''),
+              contentType: genErr.contentType || 'text/plain'
+            });
+          } else {
+            addInlineError('文生图失败：' + sanitizeSensitiveText(genErr.message || String(genErr)), {
+              rawText: genErr.rawText ? sanitizeSensitiveText(String(genErr.rawText)) : undefined,
+              contentType: genErr.contentType
+            });
+          }
         }
       }
       else if (scenario === 'images_edit') {
