@@ -589,3 +589,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: 思考等级更新+图片识别+Images文生图图生图+favicon
+
+**Date**: 2026-07-17
+**Task**: 思考等级更新+图片识别+Images文生图图生图+favicon
+**Branch**: `main`
+
+### Summary
+
+全面复核 MODEL_CATALOG（gpt-5.5/5.5-pro/5.6、grok-4.5、gemini-3 pro 等）；三厂商图片支持改名为图片识别；新增 Images 厂商 Tab（文生图/图生图，multipart 失败回退 JSON）；模型下拉选中高亮；SVG favicon。任务产物与代码已提交 d82996a。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d82996a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
-- **Last Active**: 2026-06-29
+- **Total Sessions**: 18
+- **Last Active**: 2026-07-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~591 | Active |
+| `journal-1.md` | ~624 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-07-17 | 思考等级更新+图片识别+Images文生图图生图+favicon | `d82996a` | `main` |
 | 17 | 2026-06-29 | 兼容 GLM 推理参数 | `7948e12`, `5b16bfa` | `main` |
 | 16 | 2026-06-25 | UI改进：HTTPS代理框折叠+模型搜索 | `6dd0924` | `main` |
 | 15 | 2026-06-25 | 模型思考等级/推理强度设置功能完成 | `01236b1`, `f793949`, `889f360`, `5349099`, `afcf1db`, `e2a03a2` | `main` |
