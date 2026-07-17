@@ -1,0 +1,17 @@
+# Local agent / browser debug dumps
+.playwright-cli/
+.omo/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Editor / OS noise
+.DS_Store
+*~
+*.swp
+*.swo
+
+# Ad-hoc local screenshots (keep tracked assets like example.png)
+gpt-5.5.png
