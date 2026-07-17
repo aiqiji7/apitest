@@ -1,0 +1,2 @@
+# Local install only — reinstall with: npm ci
+node_modules/

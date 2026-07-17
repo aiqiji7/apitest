@@ -2,7 +2,10 @@
 .playwright-cli/
 .omo/
 
-# Python cache
+# Dependencies (also covered under .opencode/.gitignore)
+node_modules/
+
+# Python cache (also covered under .trellis/.gitignore)
 __pycache__/
 *.py[cod]
 *$py.class
@@ -15,3 +18,6 @@ __pycache__/
 
 # Ad-hoc local screenshots (keep tracked assets like example.png)
 gpt-5.5.png
+
+# Note: Trellis runtime/private state (.runtime/, .developer, .backup-*, etc.)
+# lives in .trellis/.gitignore — do not ignore the whole .trellis/ tree.
