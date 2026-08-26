@@ -762,7 +762,7 @@ body {
 
 /* HTML 预览：请求与响应下方，默认展开渲染模型生成的 HTML */
 .html-preview-section {
-    margin-top: 12px;
+    margin: 12px 0;
     border: 1px solid #e5f1ff;
     border-radius: 12px;
     background: #ffffff;
@@ -807,7 +807,7 @@ body {
 .html-preview-frame {
     display: block;
     width: 100%;
-    height: 320px;
+    height: 240px;
     border: none;
     border-radius: 8px;
 }
