@@ -697,6 +697,17 @@
     return null;
   }
 
+  function injectPreviewStyle(doc) {
+    const style = `<style>html,body{margin:0;padding:0;}svg{display:block;}</style>`;
+    if (/<head[^>]*>/i.test(doc)) {
+      return doc.replace(/<head[^>]*>/i, (m) => m + style);
+    }
+    if (/<html[^>]*>/i.test(doc)) {
+      return doc.replace(/<html[^>]*>/i, (m) => m + style);
+    }
+    return style + doc;
+  }
+
   function renderHtmlPreview(container, doc) {
     container.innerHTML = '';
     const iframe = document.createElement('iframe');
@@ -704,7 +715,7 @@
     iframe.setAttribute('sandbox', 'allow-scripts');
     iframe.setAttribute('title', 'HTML 预览');
     container.appendChild(iframe);
-    iframe.srcdoc = doc;
+    iframe.srcdoc = injectPreviewStyle(doc);
   }
 
   let lastRenderedHtml = null;
