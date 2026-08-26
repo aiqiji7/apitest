@@ -16,6 +16,7 @@
   const htmlPreviewSection = $('#htmlPreviewSection');
   const htmlPreviewContainer = $('#htmlPreviewContainer');
   const htmlPreviewToggle = $('#htmlPreviewToggle');
+  const htmlPreviewOpen = $('#htmlPreviewOpen');
   const vendorTypeWrap = $('#vendorType');
   const testTypeWrap = $('#testType');
   const openaiProtocolWrap = $('#openaiProtocol');
@@ -737,6 +738,19 @@
     showHtmlPreviewSection();
   }
 
+  function openHtmlPreviewFullsize() {
+    const doc = lastRenderedHtml;
+    if (!doc) return;
+    const blob = new Blob([doc], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
   function clearResults() {
     stopWaitingTimer();
     blocksContainer.innerHTML = '';
@@ -925,6 +939,10 @@
       htmlPreviewContainer.style.display = hidden ? '' : 'none';
       htmlPreviewToggle.textContent = hidden ? '收起' : '展开';
     });
+  }
+
+  if (htmlPreviewOpen) {
+    htmlPreviewOpen.addEventListener('click', openHtmlPreviewFullsize);
   }
 
   // Defaults

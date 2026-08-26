@@ -800,6 +800,12 @@ body {
     background: #eff6ff;
 }
 
+.html-preview-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
 .html-preview-container {
     padding: 8px;
 }
