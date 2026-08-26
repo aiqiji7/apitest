@@ -760,9 +760,33 @@ body {
     opacity: .8;
 }
 
-/* HTML 预览：将模型生成的 HTML 直接渲染为可交互预览 */
-.html-preview-btn {
-    background: #eff6ff;
+/* HTML 预览：请求与响应下方，默认展开渲染模型生成的 HTML */
+.html-preview-section {
+    margin-top: 12px;
+    border: 1px solid #e5f1ff;
+    border-radius: 12px;
+    background: #ffffff;
+    overflow: hidden;
+}
+
+.html-preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid #e5f1ff;
+    background: #f8fbff;
+}
+
+.html-preview-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #0f172a;
+    letter-spacing: .2px;
+}
+
+.html-preview-toggle {
+    background: #ffffff;
     border: 1px solid #cfe6ff;
     color: #1e90ff;
     font-size: 11px;
@@ -770,20 +794,14 @@ body {
     padding: 2px 8px;
     border-radius: 6px;
     cursor: pointer;
-    margin-left: auto;
-    line-height: 1.4;
 }
 
-.html-preview-btn:hover {
-    background: #dbeafe;
+.html-preview-toggle:hover {
+    background: #eff6ff;
 }
 
-.html-preview {
-    margin-top: 8px;
-    border: 1px solid #e5f1ff;
-    border-radius: 8px;
-    overflow: hidden;
-    background: #ffffff;
+.html-preview-container {
+    padding: 8px;
 }
 
 .html-preview-frame {
@@ -791,6 +809,7 @@ body {
     width: 100%;
     height: 420px;
     border: none;
+    border-radius: 8px;
 }
 
 /* 最新消息下方的内联加载等待器 */

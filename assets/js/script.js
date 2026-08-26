@@ -13,6 +13,9 @@
   const messageTimeline = $('#messageTimeline');
   const waitingContainer = $('#waitingContainer');
   const errorMessage = $('#errorMessage');
+  const htmlPreviewSection = $('#htmlPreviewSection');
+  const htmlPreviewContainer = $('#htmlPreviewContainer');
+  const htmlPreviewToggle = $('#htmlPreviewToggle');
   const vendorTypeWrap = $('#vendorType');
   const testTypeWrap = $('#testType');
   const openaiProtocolWrap = $('#openaiProtocol');
@@ -639,7 +642,7 @@
     card.appendChild(title);
     card.appendChild(pre);
     if (role === 'assistant') {
-      attachHtmlPreview(card, payload);
+      updateHtmlPreviewSection(payload);
     }
     messageTimeline.appendChild(card);
     // Keep waiting loader under the latest message while pending
@@ -656,7 +659,7 @@
     if (pre) {
       pre.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
     }
-    attachHtmlPreview(card, payload);
+    updateHtmlPreviewSection(payload);
   }
 
   // 将响应内容规整为文本，用于 HTML 预览检测
@@ -704,44 +707,22 @@
     iframe.srcdoc = doc;
   }
 
-  function attachHtmlPreview(card, payload) {
-    if (!card) return;
+  let lastRenderedHtml = null;
+
+  function showHtmlPreviewSection() {
+    if (!htmlPreviewSection) return;
+    htmlPreviewSection.style.display = '';
+    if (htmlPreviewToggle) htmlPreviewToggle.textContent = '收起';
+  }
+
+  function updateHtmlPreviewSection(payload) {
+    if (!htmlPreviewSection || !htmlPreviewContainer) return;
     const doc = extractHtmlContent(payload);
-    let btn = card.querySelector('.html-preview-btn');
-    let wrap = card.querySelector('.html-preview');
-    if (!doc) {
-      if (btn) btn.remove();
-      if (wrap) wrap.remove();
-      return;
-    }
-    if (!btn) {
-      const meta = card.querySelector('.meta');
-      if (!meta) return;
-      btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'html-preview-btn';
-      btn.textContent = '预览';
-      meta.appendChild(btn);
-    }
-    if (!wrap) {
-      const pre = card.querySelector('pre.answer-content');
-      if (!pre) return;
-      wrap = document.createElement('div');
-      wrap.className = 'html-preview';
-      wrap.style.display = 'none';
-      pre.insertAdjacentElement('afterend', wrap);
-    }
-    wrap.dataset.doc = doc;
-    btn.onclick = () => {
-      if (wrap.style.display === 'none') {
-        renderHtmlPreview(wrap, wrap.dataset.doc);
-        wrap.style.display = '';
-        btn.textContent = '收起预览';
-      } else {
-        wrap.style.display = 'none';
-        btn.textContent = '预览';
-      }
-    };
+    if (!doc) return;
+    if (doc === lastRenderedHtml) return;
+    lastRenderedHtml = doc;
+    renderHtmlPreview(htmlPreviewContainer, doc);
+    showHtmlPreviewSection();
   }
 
   function clearResults() {
@@ -749,6 +730,9 @@
     blocksContainer.innerHTML = '';
     messageTimeline.innerHTML = '';
     errorMessage.textContent = '';
+    lastRenderedHtml = null;
+    if (htmlPreviewSection) htmlPreviewSection.style.display = 'none';
+    if (htmlPreviewContainer) htmlPreviewContainer.innerHTML = '';
     hideWaiting();
     updateClearBtnState();
   }
@@ -918,6 +902,14 @@
   });
 
   clearBtn.addEventListener('click', clearResults);
+
+  if (htmlPreviewToggle) {
+    htmlPreviewToggle.addEventListener('click', () => {
+      const hidden = htmlPreviewSection.style.display === 'none';
+      htmlPreviewSection.style.display = hidden ? '' : 'none';
+      htmlPreviewToggle.textContent = hidden ? '收起' : '展开';
+    });
+  }
 
   // Defaults
   // Password toggle functionality
@@ -1605,7 +1597,7 @@
           pre.scrollTop = pre.scrollHeight;
         }
       }
-      attachHtmlPreview(assistantCard, fullText);
+      updateHtmlPreviewSection(fullText);
       streamedChunks++;
     };
 
