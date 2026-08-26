@@ -806,8 +806,9 @@ body {
 
 .html-preview-frame {
     display: block;
-    width: 100%;
-    height: 240px;
+    width: 400px;
+    max-width: 100%;
+    height: 300px;
     border: none;
     border-radius: 8px;
 }
