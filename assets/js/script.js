@@ -638,6 +638,9 @@
     title.appendChild(meta);
     card.appendChild(title);
     card.appendChild(pre);
+    if (role === 'assistant') {
+      attachHtmlPreview(card, payload);
+    }
     messageTimeline.appendChild(card);
     // Keep waiting loader under the latest message while pending
     if (requestPending) { showWaiting(); }
@@ -653,6 +656,92 @@
     if (pre) {
       pre.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
     }
+    attachHtmlPreview(card, payload);
+  }
+
+  // 将响应内容规整为文本，用于 HTML 预览检测
+  function coercePayloadToText(payload) {
+    if (typeof payload === 'string') return payload;
+    if (payload == null) return '';
+    const parts = [];
+    const pushItemText = (item) => {
+      if (item == null) return;
+      if (typeof item === 'string') { parts.push(item); return; }
+      if (typeof item.text === 'string') { parts.push(item.text); return; }
+      if (typeof item.content === 'string') { parts.push(item.content); return; }
+      if (Array.isArray(item.content)) { item.content.forEach(pushItemText); }
+    };
+    if (Array.isArray(payload)) {
+      payload.forEach(pushItemText);
+    } else if (typeof payload === 'object') {
+      pushItemText(payload);
+    } else {
+      parts.push(String(payload));
+    }
+    return parts.join('\n');
+  }
+
+  // 从响应文本中提取可预览的 HTML 文档，无则返回 null
+  function extractHtmlContent(payload) {
+    const text = coercePayloadToText(payload);
+    if (!text) return null;
+    const fence = text.match(/```(?:html|HTML|htm|HTM)\s*\n([\s\S]*?)```/);
+    if (fence && fence[1] && fence[1].trim()) return fence[1].trim();
+    const docIdx = text.search(/<!DOCTYPE\s+html[^>]*>/i);
+    if (docIdx !== -1) return text.slice(docIdx).trim();
+    const htmlIdx = text.search(/<html[\s>]/i);
+    if (htmlIdx !== -1) return text.slice(htmlIdx).trim();
+    return null;
+  }
+
+  function renderHtmlPreview(container, doc) {
+    container.innerHTML = '';
+    const iframe = document.createElement('iframe');
+    iframe.className = 'html-preview-frame';
+    iframe.setAttribute('sandbox', 'allow-scripts');
+    iframe.setAttribute('title', 'HTML 预览');
+    container.appendChild(iframe);
+    iframe.srcdoc = doc;
+  }
+
+  function attachHtmlPreview(card, payload) {
+    if (!card) return;
+    const doc = extractHtmlContent(payload);
+    let btn = card.querySelector('.html-preview-btn');
+    let wrap = card.querySelector('.html-preview');
+    if (!doc) {
+      if (btn) btn.remove();
+      if (wrap) wrap.remove();
+      return;
+    }
+    if (!btn) {
+      const meta = card.querySelector('.meta');
+      if (!meta) return;
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'html-preview-btn';
+      btn.textContent = '预览';
+      meta.appendChild(btn);
+    }
+    if (!wrap) {
+      const pre = card.querySelector('pre.answer-content');
+      if (!pre) return;
+      wrap = document.createElement('div');
+      wrap.className = 'html-preview';
+      wrap.style.display = 'none';
+      pre.insertAdjacentElement('afterend', wrap);
+    }
+    wrap.dataset.doc = doc;
+    btn.onclick = () => {
+      if (wrap.style.display === 'none') {
+        renderHtmlPreview(wrap, wrap.dataset.doc);
+        wrap.style.display = '';
+        btn.textContent = '收起预览';
+      } else {
+        wrap.style.display = 'none';
+        btn.textContent = '预览';
+      }
+    };
   }
 
   function clearResults() {
@@ -1516,6 +1605,7 @@
           pre.scrollTop = pre.scrollHeight;
         }
       }
+      attachHtmlPreview(assistantCard, fullText);
       streamedChunks++;
     };
 

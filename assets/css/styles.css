@@ -760,6 +760,39 @@ body {
     opacity: .8;
 }
 
+/* HTML 预览：将模型生成的 HTML 直接渲染为可交互预览 */
+.html-preview-btn {
+    background: #eff6ff;
+    border: 1px solid #cfe6ff;
+    color: #1e90ff;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-left: auto;
+    line-height: 1.4;
+}
+
+.html-preview-btn:hover {
+    background: #dbeafe;
+}
+
+.html-preview {
+    margin-top: 8px;
+    border: 1px solid #e5f1ff;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #ffffff;
+}
+
+.html-preview-frame {
+    display: block;
+    width: 100%;
+    height: 420px;
+    border: none;
+}
+
 /* 最新消息下方的内联加载等待器 */
 .waiting-inline {
     display: inline-flex;
