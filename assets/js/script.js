@@ -1029,11 +1029,7 @@
       label: '模型智商测试题 3',
       expectedAnswer: '无固定答案（代码生成题，请人工评估）',
       expectedDuration: '约 1-2 分钟',
-      prompt: String.raw`请生成一个完整的、可直接在浏览器中运行的 HTML 文件，内容是用 SVG 绘制一个鹈鹕骑自行车的 2D 动画。要求：
-- 使用内联 SVG，配合 CSS 动画或 SMIL 动画，让自行车车轮转动、踏板运动、鹈鹕身体随骑行轻微起伏，形成连贯的 2D 动画；
-- 画面清晰可辨：鹈鹕（长喙、喉囊、翅膀）骑在自行车（两个车轮、车架、车把、踏板、链条）上，空间关系正确；
-- 代码语法正确、结构完整（含 <!DOCTYPE html>、<html>、<head>、<body>），可直接运行；
-- 请直接输出完整代码，不要省略。`
+      prompt: String.raw`创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画。要求：- 请直接输出完整代码，不要省略。`
     }
   };
 
@@ -1597,7 +1593,6 @@
           pre.scrollTop = pre.scrollHeight;
         }
       }
-      updateHtmlPreviewSection(fullText);
       streamedChunks++;
     };
 
@@ -1653,6 +1648,8 @@
           if (pre) pre.textContent = '（模型未输出正式回答，内容在上方思考过程中）';
         }
       }
+      // 全部回复输出结束后再渲染 HTML 预览
+      updateHtmlPreviewSection(accumulatedText);
     } else if (result.json) {
       addBlock('响应 #1', result.json, duration);
       // Non-streamed: extract content from JSON response
