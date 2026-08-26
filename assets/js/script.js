@@ -698,7 +698,7 @@
   }
 
   function injectPreviewStyle(doc) {
-    const style = `<style>html,body{margin:0;padding:0;}svg{display:block;}</style>`;
+    const style = `<style>html,body{margin:0;padding:0;width:100%;height:100%;}svg{width:100%;height:100%;display:block;}</style>`;
     if (/<head[^>]*>/i.test(doc)) {
       return doc.replace(/<head[^>]*>/i, (m) => m + style);
     }
