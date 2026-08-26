@@ -712,6 +712,7 @@
   function showHtmlPreviewSection() {
     if (!htmlPreviewSection) return;
     htmlPreviewSection.style.display = '';
+    if (htmlPreviewContainer) htmlPreviewContainer.style.display = '';
     if (htmlPreviewToggle) htmlPreviewToggle.textContent = '收起';
   }
 
@@ -732,7 +733,11 @@
     errorMessage.textContent = '';
     lastRenderedHtml = null;
     if (htmlPreviewSection) htmlPreviewSection.style.display = 'none';
-    if (htmlPreviewContainer) htmlPreviewContainer.innerHTML = '';
+    if (htmlPreviewContainer) {
+      htmlPreviewContainer.innerHTML = '';
+      htmlPreviewContainer.style.display = '';
+    }
+    if (htmlPreviewToggle) htmlPreviewToggle.textContent = '收起';
     hideWaiting();
     updateClearBtnState();
   }
@@ -903,10 +908,10 @@
 
   clearBtn.addEventListener('click', clearResults);
 
-  if (htmlPreviewToggle) {
+  if (htmlPreviewToggle && htmlPreviewContainer) {
     htmlPreviewToggle.addEventListener('click', () => {
-      const hidden = htmlPreviewSection.style.display === 'none';
-      htmlPreviewSection.style.display = hidden ? '' : 'none';
+      const hidden = htmlPreviewContainer.style.display === 'none';
+      htmlPreviewContainer.style.display = hidden ? '' : 'none';
       htmlPreviewToggle.textContent = hidden ? '收起' : '展开';
     });
   }
