@@ -2,6 +2,8 @@
 
 <p align="center">纯前端的多厂商 API 调用测试页面，用来测试 OpenAI/Anthropic/Google 等 API 的特殊调用方式（工具调用、搜索、URL 上下文等）。所有数据仅在浏览器本地处理与保存。</p>
 
+> 来源：本项目基于 [CookSleep/newapi-special-test](https://github.com/CookSleep/newapi-special-test)（GPL-3.0）二次开发，感谢原作者的开源贡献。
+
 ## 功能特性
 
 - **纯前端与本地存储：**
@@ -59,6 +61,21 @@ window.APP_CONFIG = {
 
 - 本项目为静态页面，可直接托管至任意静态托管平台（GitHub Pages、Netlify、Vercel、Nginx 等）。
 - 如需覆盖默认配置，直接修改 `assets/js/config.js` 并重新部署即可。
+
+## 来源与致谢
+
+本项目是基于 [CookSleep/newapi-special-test](https://github.com/CookSleep/newapi-special-test)（GPL-3.0）的二次开发（fork），感谢原作者的开源贡献。本项目继续采用原项目的 [GPL v3.0](LICENSE) 许可证。
+
+相对原项目，主要新增/修改如下：
+
+- 新增 **Images** 厂商测试（文生图、图生图）及生成图片预览
+- 各厂商（OpenAI/Anthropic/Google）新增**图片识别**测试场景
+- 新增**模型智商测试**与 **Juice 值测试**（OpenAI）场景
+- 新增**模型列表自动获取**（带缓存）与**最近连接**历史
+- 新增 **HTTPS 代理**配置（便于在 HTTPS 页面访问 HTTP 端点）
+- 新增**思考等级**与**流式/非流式**响应开关
+- 新增 **HTML 预览**（整页缩放、原像素新窗口）与连接等待实时耗时显示
+- 请求展示支持**敏感头信息脱敏**
 
 ## 贡献
 
