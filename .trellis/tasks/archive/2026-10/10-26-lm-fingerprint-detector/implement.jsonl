@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/10-26-lm-fingerprint-detector/research/upstream-contract.md", "reason": "上游算法/数据契约、conformance 用例和浏览器依赖链，实施前必须按此对齐 API 与数据格式。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "新增前端模块需遵守项目的质量与禁止模式。"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "指纹面板与样本卡需要沿用现有组件/样式组织方式。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有端点、代理、流式解析和按钮样式，避免复制第二套行为。"}

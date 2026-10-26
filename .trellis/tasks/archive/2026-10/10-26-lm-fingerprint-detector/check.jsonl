@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/10-26-lm-fingerprint-detector/research/upstream-contract.md", "reason": "检查实现是否保持上游检测语义：三次有效样本、partial/unscorable/not_model 分支和闭集概率。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查新增代码的错误处理、隐私脱敏和可维护性。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 script.js bridge、fingerprint.js、核心 bundle 与静态数据之间的边界和契约。"}
