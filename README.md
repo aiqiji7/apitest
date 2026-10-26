@@ -13,6 +13,7 @@
   - **OpenAI:** 工具调用（Chat Completions/Responses）、搜索（Responses）
   - **Anthropic:** 工具调用
   - **Google Gemini:** 工具调用、搜索、URL 上下文
+  - **模型指纹:** OpenAI Chat Completions / Responses、Anthropic，支持 API 自动采样与手动粘贴评分
 - **配置管理与一键默认：**
   - 通过“管理配置”弹窗新增/编辑/删除配置
   - 支持星标“默认配置”，页面加载自动应用
@@ -33,14 +34,37 @@
 2. **填写 API 信息：**
    - 在“API 配置”中填写 `API URL`、`API Key`、`模型`，或点击“管理配置”从右侧列表选择并应用。
 3. **选择测试类型：**
-   - 首先在“测试内容”中选择厂商（OpenAI / Anthropic / Google）。
+   - 首先在“测试内容”中选择厂商（OpenAI / Anthropic / Google / Images）。
    - 然后选择具体的测试场景（如工具调用、搜索等）。页面会自动填充推荐的测试消息。
+   - 如需模型指纹检测，选择「模型指纹」，再选择请求格式后开始检测；也可以切换到「手动粘贴」直接粘贴三条回答评分。
 4. **输入用户消息并发送：**
-   - 在文本框输入用户消息，点击“发送测试请求”。
+   - 在文本框输入用户消息，点击“发送测试请求”。模型指纹模式不需要输入用户消息。
 5. **查看结果：**
    - 左侧查看“轮次与消息”，右侧查看“请求与响应”。每个代码块都支持复制。
 
 > 小贴士：该页面为纯前端网页，所有信息仅存储在您的浏览器本地。
+
+## 模型指纹检测
+
+「模型指纹」入口会把同一组无语义整数任务发送给目标 API 三次，并在浏览器本地与内置参考库比对，给出最相似的候选模型与闭集置信度。
+
+- 支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages；也可以切换到「手动粘贴」，把三条回答直接粘贴进来评分。
+- 每条回答至少需要 80 个 1–355 的有效整数；三条齐全才显示置信度，1–2 条只显示 partial ranking。
+- **结果只是参考库内的闭集排序，不是模型身份证明。** 库外模型也会得到“最像”的候选。
+- 参考数据快照：63 个模型，构建时间 `2026-10-25T10:04:10.682171+00:00`，来自上游 commit `1e58ed8`。
+- 检测器数据只在进入「模型指纹」时懒加载（`assets/data/lmfpd/shared_detector.bin`，约 4.6 MB），随后写入浏览器 IndexedDB 缓存。
+- 评分完全在浏览器本地完成；采样请求会直接发送到你配置的 API，不会上传到本项目以外的评分服务。
+
+更新参考数据（维护者）：
+
+```bash
+node scripts/sync-lmfpd.mjs --ref <upstream-commit>
+node scripts/sync-lmfpd.mjs --verify-only
+```
+
+同步脚本会重新打包核心算法、裁剪模型元数据，并跑上游 conformance 用例；校验失败不会覆盖现有数据。
+
+检测算法与参考数据来自 [Ikaleio/lm-detector](https://github.com/Ikaleio/lm-detector)（MIT），版权归原作者所有。
 
 ## 修改默认系统配置
 
@@ -66,6 +90,8 @@ window.APP_CONFIG = {
 
 本项目是基于 [CookSleep/newapi-special-test](https://github.com/CookSleep/newapi-special-test)（GPL-3.0）的二次开发（fork），感谢原作者的开源贡献。本项目继续采用原项目的 [GPL v3.0](LICENSE) 许可证。
 
+模型指纹检测的算法与参考数据来自 [Ikaleio/lm-detector](https://github.com/Ikaleio/lm-detector)，采用 MIT 许可，版权归原作者所有；本项目仅做浏览器端集成与数据快照，相关许可文本见 `assets/vendor/lmfpd/LICENSE`。
+
 相对原项目，主要新增/修改如下：
 
 - 新增 **Images** 厂商测试（文生图、图生图）及生成图片预览
@@ -76,6 +102,7 @@ window.APP_CONFIG = {
 - 新增**思考等级**与**流式/非流式**响应开关
 - 新增 **HTML 预览**（整页缩放、原像素新窗口）与连接等待实时耗时显示
 - 请求展示支持**敏感头信息脱敏**
+- 新增**模型指纹检测**（三次采样、本地评分、手动粘贴、参考库版本提示）
 
 ## 贡献
 

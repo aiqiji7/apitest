@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI API 特殊调用测试</title>
   <link rel="icon" href="assets/favicon.svg?v=20260717" type="image/svg+xml" />
-  <link rel="stylesheet" href="assets/css/styles.css?v=20260827" />
+  <link rel="stylesheet" href="assets/css/styles.css?v=20261026" />
 </head>
 <body>
   <div class="container">
@@ -108,6 +108,7 @@
             <button class="seg-btn" data-vendor="anthropic">Anthropic</button>
             <button class="seg-btn" data-vendor="google">Google</button>
             <button class="seg-btn" data-vendor="images">Images</button>
+            <button class="seg-btn" data-vendor="fingerprint">模型指纹</button>
           </div>
           <div class="segmented" id="openaiProtocol" style="display:none;">
             <button class="seg-btn active" data-protocol="chat_completions">Chat Completions</button>
@@ -117,7 +118,7 @@
             <!-- 由JS动态渲染 -->
           </div>
 
-          <div class="input-group">
+          <div class="input-group user-input-group">
             <label for="userInput">用户消息</label>
             <textarea id="userInput" class="input-textarea" rows="2" placeholder="请输入本次测试的用户消息"></textarea>
           </div>
@@ -148,6 +149,89 @@
             <button class="btn" id="clearBtn">清空结果</button>
             <div id="waitingContainer" class="waiting-container"></div>
           </div>
+
+          <section id="fingerprintPanel" class="fingerprint-panel" hidden aria-labelledby="fingerprintTitle">
+            <div class="fingerprint-header">
+              <div class="fingerprint-heading">
+                <h3 id="fingerprintTitle">模型指纹检测</h3>
+                <p class="fingerprint-intro">让模型凭第一反应写出约 300 个 1–355 的整数，在本地与参考库比对。结果只是参考库内的闭集排序，不是模型身份证明。</p>
+              </div>
+              <div class="fingerprint-setup">
+                <div class="fingerprint-field">
+                  <span class="fingerprint-field-label">采样方式</span>
+                  <div class="segmented fingerprint-segmented" id="fingerprintMode" role="group" aria-label="采样方式">
+                    <button type="button" class="seg-btn active" data-mode="api" aria-pressed="true">API 自动采样</button>
+                    <button type="button" class="seg-btn" data-mode="manual" aria-pressed="false">手动粘贴</button>
+                  </div>
+                </div>
+                <div class="fingerprint-field">
+                  <span class="fingerprint-field-label">请求格式</span>
+                  <div class="segmented fingerprint-segmented" id="fingerprintFormat" role="group" aria-label="请求格式">
+                    <button type="button" class="seg-btn active" data-format="chat_completions" aria-pressed="true">Chat Completions</button>
+                    <button type="button" class="seg-btn" data-format="responses" aria-pressed="false">Responses</button>
+                    <button type="button" class="seg-btn" data-format="anthropic" aria-pressed="false">Anthropic</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="fingerprint-actions">
+              <div class="fingerprint-action-buttons">
+                <button type="button" class="btn btn-primary" id="fingerprintStartBtn">开始检测</button>
+                <button type="button" class="btn fingerprint-btn-danger" id="fingerprintStopBtn" disabled>停止</button>
+                <button type="button" class="btn btn-secondary" id="fingerprintRegenerateBtn">重新生成题目</button>
+              </div>
+              <div class="fingerprint-toggles">
+                <label class="fingerprint-switch">
+                  <input type="checkbox" id="fingerprintParallelToggle" checked />
+                  <span class="toggle-slider" aria-hidden="true"></span>
+                  <span class="fingerprint-switch-text">并行请求</span>
+                </label>
+                <label class="fingerprint-switch">
+                  <input type="checkbox" id="fingerprintStreamToggle" checked />
+                  <span class="toggle-slider" aria-hidden="true"></span>
+                  <span class="fingerprint-switch-text">流式响应</span>
+                </label>
+              </div>
+              <div id="fingerprintStatus" class="fingerprint-status" role="status" aria-live="polite">尚未开始</div>
+            </div>
+
+            <div class="fingerprint-data">
+              <div id="fingerprintDataRow" class="fingerprint-data-row">
+                <span class="fingerprint-data-dot" aria-hidden="true"></span>
+                <span id="fingerprintDataStatus" class="fingerprint-data-status" aria-live="polite">参考数据尚未加载</span>
+                <span id="fingerprintDataMeta" class="fingerprint-data-meta"></span>
+                <button type="button" id="fingerprintDataRetryBtn" class="fingerprint-retry-btn" hidden>重试</button>
+              </div>
+              <progress id="fingerprintDataProgress" class="fingerprint-progress" max="100" value="0" aria-label="参考数据加载进度" hidden></progress>
+            </div>
+
+            <div id="fingerprintError" class="fingerprint-error" role="alert" hidden></div>
+
+            <div class="fingerprint-section">
+              <div class="fingerprint-section-head">
+                <h4>样本</h4>
+                <span class="fingerprint-section-hint">三条独立题目，每条至少 80 个有效数字</span>
+              </div>
+              <div id="fingerprintSamples" class="fingerprint-samples"></div>
+              <p id="fingerprintManualHint" class="fingerprint-manual-hint" hidden>把三条回答分别粘贴到上面的样本卡，然后点击“评分”。</p>
+              <button type="button" class="btn btn-primary fingerprint-score-btn" id="fingerprintScoreBtn" hidden>评分</button>
+            </div>
+
+            <div class="fingerprint-section">
+              <div class="fingerprint-section-head">
+                <h4>结果</h4>
+              </div>
+              <div id="fingerprintResult" class="fingerprint-result">
+                <p class="fingerprint-empty">完成三次有效采样后显示排名。</p>
+              </div>
+              <div class="fingerprint-caveat">参考库内的闭集排序，不是模型身份证明。库外模型也会得到“最像”的候选。</div>
+            </div>
+
+            <div id="fingerprintAttribution" class="fingerprint-attribution">
+              检测算法与参考数据来自 <a href="https://github.com/Ikaleio/lm-detector" target="_blank" rel="noopener noreferrer">LM Fingerpoint Detector</a>（MIT）
+            </div>
+          </section>
         </div>
 
         <div class="split-columns">
@@ -235,5 +319,6 @@
 
   <script src="assets/js/config.js?v=20260625"></script>
   <script src="assets/js/script.js?v=20260827"></script>
+  <script src="assets/js/fingerprint.js?v=20261026"></script>
 </body>
 </html>

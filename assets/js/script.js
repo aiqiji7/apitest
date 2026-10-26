@@ -2350,6 +2350,10 @@
 
   // 渲染测试按钮
   function renderTestButtons(vendor) {
+    if (vendor === 'fingerprint') {
+      testTypeWrap.innerHTML = '';
+      return;
+    }
     const tests = vendor === 'openai' ? getOpenaiTests() : (vendorTests[vendor] || []);
     testTypeWrap.innerHTML = tests.map((t, i) =>
       `<button class="seg-btn${i === 0 ? ' active' : ''}" data-scenario="${t.scenario}">${escapeHtml(t.label)}</button>`
@@ -2372,6 +2376,8 @@
       $$('#openaiProtocol .seg-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.protocol === 'chat_completions'));
     }
     renderTestButtons(vendor);
+    document.body.classList.toggle('fingerprint-mode', vendor === 'fingerprint');
+    window.dispatchEvent(new CustomEvent('apitest:vendor-change', { detail: { vendor } }));
     clearResults();
   }
 
@@ -2421,6 +2427,7 @@
 
   // Test function call flow (multiple scenarios)
   testBtn.addEventListener('click', async () => {
+    if (currentVendor === 'fingerprint') return;
     abortCurrentRequest();
     const apiUrl = apiUrlEl.value.trim();
     const apiKey = apiKeyEl.value.trim();
@@ -4998,6 +5005,26 @@
       }
     });
   }
+
+  // Narrow read-only bridge for auxiliary controllers (e.g. fingerprint panel).
+  function getRequestContext() {
+    return {
+      apiUrl: normalizeApiUrl(apiUrlEl.value.trim()),
+      apiKey: apiKeyEl.value.trim(),
+      model: (modelEl.value || SYSTEM_DEFAULTS.model || '').trim(),
+      stream: isStreamEnabled(),
+      proxyUrl: getProxyUrl()
+    };
+  }
+
+  window.APITestBridge = {
+    getRequestContext,
+    buildEndpoint,
+    buildResponsesEndpoint,
+    buildAnthropicEndpoint,
+    fetchAndStream,
+    sanitizeSensitiveText
+  };
 
   // Initial UI update
   updateHttpProxyUI();

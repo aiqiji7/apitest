@@ -1,0 +1,9 @@
+{
+  "upstream": "Ikaleio/lm-detector",
+  "upstream_ref": "1e58ed83c1cde17f88cba89560ad4d083042ae92",
+  "built_at": "2026-10-25T10:04:10.682171+00:00",
+  "model_count": 63,
+  "detector_sha256": "6a102f86c3f8a9aeeb052edfbdf5edf6f9e891ac6693129a4e007139c74861f6",
+  "models_sha256": "50a5eb5cda7e0a5eb75ecd5513a865b54a8b9498433f3e039ecc70ff7d85ba4d",
+  "license": "MIT"
+}

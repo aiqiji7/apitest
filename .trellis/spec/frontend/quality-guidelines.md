@@ -230,11 +230,21 @@ When extracting reasoning/thinking content from API responses, check in this ord
 
 ---
 
+## Static Heavy Data and Optional Panels
+
+When adding a feature that needs a large local data file (for example a model-fingerprint detector):
+
+- **Lazy-load on panel activation**, never on initial page load. Track resource requests in an end-to-end test to prove the file is not fetched on first paint.
+- **Cache by version + hash** (IndexedDB or Cache API) and fall back to memory when storage is unavailable. Validate the data's `built_at` / hash against its metadata before using it.
+- **Show explicit loading, failure, and retry states**. A 4–5 MB binary download on mobile must have progress feedback and must not block unrelated page features.
+- **Keep large vendored algorithms behind a narrow bridge** when the existing page is a legacy IIFE. Expose only the functions the new feature needs instead of refactoring the whole file.
+- **Verify vendored algorithms against upstream conformance fixtures** before testing the UI. A pretty panel can hide a wrong score; compare decisions and predictions against known cases.
+
 ## Testing Requirements
 
 <!-- What level of testing is expected -->
 
-(To be filled by the team)
+For static-page features with external API calls, prefer a local mock API plus Playwright so end-to-end tests do not spend real API credits. Cover success, partial, failure, cancel/retry, and mobile layout paths.
 
 ---
 
