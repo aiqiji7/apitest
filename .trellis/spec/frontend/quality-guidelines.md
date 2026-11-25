@@ -236,9 +236,13 @@ When adding a feature that needs a large local data file (for example a model-fi
 
 - **Lazy-load on panel activation**, never on initial page load. Track resource requests in an end-to-end test to prove the file is not fetched on first paint.
 - **Cache by version + hash** (IndexedDB or Cache API) and fall back to memory when storage is unavailable. Validate the data's `built_at` / hash against its metadata before using it.
-- **Show explicit loading, failure, and retry states**. A 4–5 MB binary download on mobile must have progress feedback and must not block unrelated page features.
+- **Show explicit loading, failure, and retry states**. Large binary downloads on mobile must have progress feedback and must not block unrelated page features.
 - **Keep large vendored algorithms behind a narrow bridge** when the existing page is a legacy IIFE. Expose only the functions the new feature needs instead of refactoring the whole file.
 - **Verify vendored algorithms against upstream conformance fixtures** before testing the UI. A pretty panel can hide a wrong score; compare decisions and predictions against known cases.
+
+For LMFPD, follow the [snapshot auto-sync contract](../backend/lmfpd-auto-sync.md) for the version-first
+loader, core SRI, Web Crypto checks on downloaded/cached bytes, fixed page snapshot, retry behavior,
+and required browser assertions. Preserve scenario/run cancellation from [Hook Guidelines](./hook-guidelines.md).
 
 ## Testing Requirements
 

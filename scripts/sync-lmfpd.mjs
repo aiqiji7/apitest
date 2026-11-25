@@ -16,32 +16,31 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHash, webcrypto } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import vm from 'node:vm'
 import { fileURLToPath } from 'node:url'
+import { validateDetectorBinary, validateBank, validateDetector, prepareOutputs, canonicalAnalysis, compareSemantic, validateConformance } from './lib/lmfpd-sync-validation.mjs'
+export { validateDetectorBinary, prepareOutputs, canonicalAnalysis, compareSemantic } from './lib/lmfpd-sync-validation.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, '..')
 
 const UPSTREAM_REPO = 'Ikaleio/lm-detector'
-const DEFAULT_REF = '1e58ed83c1cde17f88cba89560ad4d083042ae92'
 const ESBUILD_VERSION = '0.28.2'
-const EXPECTED_DETECTOR_BYTES = 4_597_032
 const EXPECTED_MINIMUM_VALID_NUMBERS = 80
 const EXPECTED_RECOMMENDED_QUERIES = 3
 const MIT_NOTICE = 'Copyright (c) 2026 xqy2006'
 const NPX = process.platform === 'win32' ? 'npx.cmd' : 'npx'
 
-const ARTIFACTS = {
+export const ARTIFACTS = Object.freeze({
   detector: 'assets/data/lmfpd/shared_detector.bin',
   models: 'assets/data/lmfpd/models.json',
   version: 'assets/data/lmfpd/VERSION.json',
   bundle: 'assets/vendor/lmfpd/lmfpd-core.js',
   license: 'assets/vendor/lmfpd/LICENSE',
-}
+})
 
 /** Upstream files needed to build and validate the browser bundle. */
 const SOURCE_FILES = [
@@ -59,30 +58,20 @@ export { generateChallenges } from './challenge-browser.js'
 export { parseNumbers } from './fingerprint-core.js'
 `
 
-/** Cases that must match the upstream analysis output; mirrors the acceptance criteria. */
-const REQUIRED_CASES = {
-  'scored-claude-opus-4.8': (actual) =>
-    actual.decision === 'scored' &&
-    actual.prediction === 'claude-opus-4.8' &&
-    typeof actual.probability === 'number' &&
-    actual.probability > 0.9,
-  'partial-two': (actual) => actual.decision === 'partial' && actual.probability === null,
-  'unscorable-short': (actual) => actual.decision === 'unscorable' && actual.results.length === 0,
-  'not-model-sorted': (actual) => actual.decision === 'not_model' && actual.results.length === 0,
-  truncated: (actual) => actual.decision === 'scored' && actual.used_outputs === 3,
-  'strict-two': (actual) => actual.decision === 'unscorable',
-}
-
 function printHelp() {
   console.log(`Usage:
+  node scripts/sync-lmfpd.mjs --latest --artifact-root DIR --result-file FILE
   node scripts/sync-lmfpd.mjs --ref <40-hex-commit> [options]
   node scripts/sync-lmfpd.mjs --verify-only [options]
 
 Options:
-  --ref <commit>        Upstream commit to pin (default: ${DEFAULT_REF})
-  --upstream <path>     Read pinned files from a local checkout instead of GitHub
+  --latest              Resolve GitHub's default branch once to a complete SHA
+  --ref <commit>        Pin a complete SHA (default: current VERSION upstream_ref)
+  --upstream <path>     Read immutable Git objects from a local repository
   --conformance <path>  Override the upstream sdk/conformance/analyze.json path
-  --verify-only         Validate the committed artifacts; never writes site files
+  --artifact-root DIR  Publish exactly five repo-relative files here, after validation
+  --result-file FILE   Write {upstream_ref,changed} only on success, outside DIR
+  --verify-only         Validate artifacts in DIR or the project; never publish
   --keep-stage          Keep the temporary staging directory when validation fails
   -h, --help            Show this help
 
@@ -94,36 +83,49 @@ Environment:
   is set at process start. Set it when downloading through an HTTP(S) proxy.`)
 }
 
-function parseArgs(argv) {
-  const options = { ref: null, upstream: null, conformance: null, verifyOnly: false, keepStage: false, help: false }
+export function parseArgs(argv) {
+  const options = { ref: null, latest: false, upstream: null, conformance: null, artifactRoot: null, resultFile: null, verifyOnly: false, keepStage: false, help: false }
+  const values = new Map([['--ref', 'ref'], ['--upstream', 'upstream'], ['--conformance', 'conformance'], ['--artifact-root', 'artifactRoot'], ['--result-file', 'resultFile']])
+  const flags = new Map([['--latest', 'latest'], ['--verify-only', 'verifyOnly'], ['--keep-stage', 'keepStage'], ['--help', 'help'], ['-h', 'help']])
+  const seen = new Set()
   let index = 0
   const valueOf = (name) => {
     const value = argv[++index]
-    if (!value || value.startsWith('--')) throw new Error(`${name} requires a value.`)
+    if (!value || value.startsWith('-')) throw new Error(`${name} requires a value.`)
     return value
   }
   for (; index < argv.length; index += 1) {
     const arg = argv[index]
-    if (arg === '--verify-only') options.verifyOnly = true
-    else if (arg === '--keep-stage') options.keepStage = true
-    else if (arg === '--help' || arg === '-h') options.help = true
-    else if (arg === '--ref') options.ref = valueOf('--ref')
-    else if (arg.startsWith('--ref=')) options.ref = arg.slice('--ref='.length)
-    else if (arg === '--upstream') options.upstream = valueOf('--upstream')
-    else if (arg.startsWith('--upstream=')) options.upstream = arg.slice('--upstream='.length)
-    else if (arg === '--conformance') options.conformance = valueOf('--conformance')
-    else if (arg.startsWith('--conformance=')) options.conformance = arg.slice('--conformance='.length)
-    else throw new Error(`Unknown argument: ${arg}`)
+    const [name] = arg.split('=')
+    if (seen.has(name)) throw new Error(`Duplicate argument: ${name}`)
+    seen.add(name)
+    if (flags.has(arg)) options[flags.get(arg)] = true
+    else if (values.has(name)) {
+      const value = arg.includes('=') ? arg.slice(name.length + 1) : valueOf(name)
+      if (!value || value.startsWith('-')) throw new Error(`${name} requires a value.`)
+      options[values.get(name)] = value
+    } else throw new Error(`Unknown argument: ${arg}`)
   }
   if (options.ref !== null && !/^[0-9a-f]{40}$/i.test(options.ref)) {
     throw new Error(`--ref must be a full 40-character commit SHA, got: ${options.ref}`)
   }
   if (options.upstream) options.upstream = path.resolve(options.upstream)
   if (options.conformance) options.conformance = path.resolve(options.conformance)
+  if (options.ref) options.ref = options.ref.toLowerCase()
+  if (options.latest && (options.ref || options.upstream || options.verifyOnly)) throw new Error('--latest is mutually exclusive with --ref, --upstream and --verify-only.')
+  if (options.verifyOnly && options.resultFile) throw new Error('--verify-only does not publish a --result-file.')
+  if (options.artifactRoot) options.artifactRoot = path.resolve(options.artifactRoot)
+  if (options.resultFile) options.resultFile = path.resolve(options.resultFile)
+  if (options.artifactRoot && options.resultFile && within(options.artifactRoot, options.resultFile)) throw new Error('--result-file must be outside --artifact-root.')
   return options
 }
 
-function artifactPaths(root) {
+function within(parent, child) {
+  const relative = path.relative(parent, child)
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+}
+
+export function artifactPaths(root) {
   return Object.fromEntries(Object.entries(ARTIFACTS).map(([key, rel]) => [key, path.join(root, rel)]))
 }
 
@@ -146,56 +148,59 @@ function rawUrl(ref, relPath) {
   return `https://raw.githubusercontent.com/${UPSTREAM_REPO}/${ref}/${parts}`
 }
 
-async function fetchRaw(ref, relPath) {
-  const url = rawUrl(ref, relPath)
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`GET ${url} failed: HTTP ${response.status} ${response.statusText}`)
-  return Buffer.from(await response.arrayBuffer())
+export async function fetchRaw(ref, relPath, fetcher = fetch) {
+  // Both transports address the same immutable object. Some networks block raw
+  // GitHub while allowing its official contents API; neither uses a moving ref.
+  requireSha(ref, 'upstream ref')
+  const encoded = relPath.split('/').map(encodeURIComponent).join('/')
+  const urls = [rawUrl(ref, relPath), `https://api.github.com/repos/${UPSTREAM_REPO}/contents/${encoded}?ref=${ref}`]
+  const errors = []
+  for (const [index, url] of urls.entries()) {
+    try {
+      const response = await fetcher(url, { headers: { Accept: 'application/vnd.github.raw+json' }, signal: AbortSignal.timeout(index === 0 ? 15_000 : 60_000) })
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText || ''}`)
+      return Buffer.from(await response.arrayBuffer())
+    } catch (error) {
+      errors.push(`GET ${url}: ${error.message}${error.cause?.code ? ` (${error.cause.code})` : ''}`)
+    }
+  }
+  throw new Error(errors.join('; '))
 }
 
-async function readUpstream(upstream, relPath) {
-  const file = path.join(upstream, relPath)
-  if (!existsSync(file)) throw new Error(`Missing upstream file: ${file}`)
-  return readFile(file)
-}
-
-async function readSource(relPath, { upstream, ref }) {
-  return upstream ? readUpstream(upstream, relPath) : fetchRaw(ref, relPath)
-}
-
-async function assertUpstreamRef(upstream, ref) {
-  let head = null
+export async function readSource(relPath, { upstream, ref }) {
+  requireSha(ref, 'upstream ref')
+  if (!upstream) return fetchRaw(ref, relPath)
   try {
-    head = execFileSync('git', ['-C', upstream, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
-  } catch {
-    console.warn(`! Could not read git HEAD from ${upstream}; skipping commit check.`)
-    return
-  }
-  if (head !== ref) {
-    throw new Error(`Upstream checkout ${upstream} is at ${head}, but --ref is ${ref}. Check out the pinned commit first.`)
+    const commit = execFileSync('git', ['-C', upstream, 'rev-parse', '--verify', `${ref}^{commit}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    if (commit !== ref) throw new Error(`resolved to ${commit}`)
+    return execFileSync('git', ['-C', upstream, 'show', `${ref}:${relPath}`], { maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
+  } catch (error) {
+    throw new Error(`Cannot prove/read Git commit ${ref}:${relPath} in ${upstream}: ${error.message}`)
   }
 }
 
-function conformanceCachePath(ref) {
-  return path.join(tmpdir(), 'lmfpd-conformance', `${ref}.json`)
+function requireSha(ref, label) {
+  if (typeof ref !== 'string' || !/^[0-9a-f]{40}$/.test(ref)) throw new Error(`${label} must be a full 40-character commit SHA: ${ref}`)
+  return ref
+}
+
+export async function resolveLatest(fetcher = fetch) {
+  const get = async url => {
+    const response = await fetcher(url, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(60_000) })
+    if (!response.ok) throw new Error(`GET ${url} failed: HTTP ${response.status} ${response.statusText || ''}`)
+    return response.json()
+  }
+  const endpoint = `https://api.github.com/repos/${UPSTREAM_REPO}`
+  const repo = await get(endpoint)
+  if (typeof repo.default_branch !== 'string' || !repo.default_branch.trim()) throw new Error('GitHub returned no default_branch.')
+  const commit = await get(`${endpoint}/commits/${encodeURIComponent(repo.default_branch)}`)
+  return requireSha(commit.sha, 'GitHub default branch SHA')
 }
 
 async function loadConformance({ upstream, ref, conformance }) {
-  if (conformance) {
-    return { bytes: await readFile(conformance), origin: conformance }
-  }
-  if (upstream) {
-    return { bytes: await readUpstream(upstream, 'sdk/conformance/analyze.json'), origin: `${upstream}/sdk/conformance/analyze.json` }
-  }
-  const cached = conformanceCachePath(ref)
-  if (existsSync(cached)) return { bytes: await readFile(cached), origin: cached }
-  return { bytes: await fetchRaw(ref, 'sdk/conformance/analyze.json'), origin: 'raw.githubusercontent.com' }
-}
-
-async function cacheConformance(ref, bytes) {
-  const target = conformanceCachePath(ref)
-  await mkdir(path.dirname(target), { recursive: true })
-  await writeFile(target, bytes)
+  if (conformance) return { bytes: await readFile(conformance), origin: conformance }
+  const rel = 'sdk/conformance/analyze.json'
+  return { bytes: await readSource(rel, { upstream, ref }), origin: upstream ? `${upstream}@${ref}:${rel}` : rawUrl(ref, rel) }
 }
 
 function bundleBanner(ref) {
@@ -209,10 +214,10 @@ function bundleBanner(ref) {
 
 async function stageSources(sourceDir, { upstream, ref }) {
   const files = [...SOURCE_FILES, 'LICENSE']
-  for (const relPath of files) {
+  await Promise.all(files.map(async relPath => {
     const bytes = await readSource(relPath, { upstream, ref })
     await writeFile(path.join(sourceDir, path.basename(relPath)), bytes)
-  }
+  }))
 }
 
 async function buildBundle(sourceDir, outFile, ref) {
@@ -237,30 +242,8 @@ async function buildBundle(sourceDir, outFile, ref) {
 }
 
 function buildModels(bank) {
-  if (!bank || typeof bank !== 'object') throw new Error('unified_bank.json is not an object.')
-  if (!Array.isArray(bank.models) || bank.models.length === 0) throw new Error('unified_bank.json has no models.')
-  if (typeof bank.built_at !== 'string' || !bank.built_at) throw new Error('unified_bank.json has no built_at.')
-
-  const seen = new Set()
-  const models = bank.models.map((model, index) => {
-    for (const key of ['id', 'display_name', 'family', 'family_name']) {
-      if (typeof model[key] !== 'string' || !model[key]) {
-        throw new Error(`Model #${index} is missing a non-empty ${key}.`)
-      }
-    }
-    if (!Number.isSafeInteger(model.response_count) || model.response_count <= 0) {
-      throw new Error(`Model ${model.id} has an invalid response_count.`)
-    }
-    if (seen.has(model.id)) throw new Error(`Duplicate model id in unified_bank.json: ${model.id}`)
-    seen.add(model.id)
-    return {
-      id: model.id,
-      display_name: model.display_name,
-      family: model.family,
-      family_name: model.family_name,
-      response_count: model.response_count,
-    }
-  })
+  validateBank(bank)
+  const models = bank.models.map(({ id, display_name, family, family_name, response_count }) => ({ id, display_name, family, family_name, response_count }))
 
   return {
     schema: bank.schema,
@@ -303,164 +286,68 @@ function pass(checks, name, ok, detail = '') {
   return Boolean(ok)
 }
 
-async function verifyArtifacts(paths, { conformance, expectedVersion = null }) {
+export async function verifyArtifacts(paths, { conformance, expectedVersion = null, allowLegacy = false }) {
   const checks = []
   const rows = []
-
-  const api = loadLmfpdBundle(paths.bundle)
-  const exported = ['generateChallenges', 'parseNumbers', 'decodeDetector', 'analyzeSharedOutputs']
-  const missing = exported.filter((name) => typeof api[name] !== 'function')
-  if (!pass(checks, 'bundle exports', missing.length === 0, missing.length ? `missing ${missing.join(', ')}` : exported.join(', '))) {
-    return { ok: false, checks, rows, info: null }
+  let info = null
+  let current = 'artifact input'
+  const check = (name, condition, detail = '') => {
+    current = name
+    if (!condition) throw new Error(detail || name)
+    pass(checks, name, true, detail)
   }
-
   try {
+    const [detectorBytes, modelsBytes, bundleBytes, licenseBytes] = await Promise.all(['detector', 'models', 'bundle', 'license'].map(k => readFile(paths[k])))
+    current = 'detector binary format'
+    const independentlyDecoded = validateDetectorBinary(detectorBytes)
+    check(current, true, `${detectorBytes.length} bytes, bounded finite float32 references`)
+    current = 'bank/detector schemas, dimensions and binding'
+    const bank = JSON.parse(modelsBytes)
+    validateDetector(independentlyDecoded, bank)
+    check(current, bank.model_count === bank.models.length, `${bank.models.length} models, ${bank.built_at}`)
+    const licenseText = licenseBytes.toString('utf8')
+    check('LICENSE MIT and copyright', ['MIT License', MIT_NOTICE, 'Permission is hereby granted, free of charge', 'THE SOFTWARE IS PROVIDED "AS IS"'].every(s => licenseText.includes(s)))
+    const detectorSha = sha256(detectorBytes), modelsSha = sha256(modelsBytes), bundleSha = sha256(bundleBytes), licenseSha = sha256(licenseBytes)
+    current = 'VERSION manifest'
+    const v = expectedVersion ?? JSON.parse(await readFile(paths.version, 'utf8'))
+    requireSha(v.upstream_ref, 'VERSION upstream_ref')
+    check('VERSION upstream and metadata', v.upstream === UPSTREAM_REPO && v.built_at === bank.built_at && v.model_count === bank.model_count && v.license === 'MIT')
+    check('VERSION detector/models hashes', v.detector_sha256 === detectorSha && v.models_sha256 === modelsSha)
+    const legacy = allowLegacy && !Object.hasOwn(v, 'bundle_sha256') && !Object.hasOwn(v, 'license_sha256')
+    check('VERSION bundle/license hashes', legacy || (v.bundle_sha256 === bundleSha && v.license_sha256 === licenseSha), legacy ? 'legacy manifest: new hashes absent' : 'both hashes match')
+    check('bundle upstream ref binding', bundleBytes.toString('utf8').includes(`Bundled from ${UPSTREAM_REPO} @ ${v.upstream_ref}`))
+    current = 'conformance snapshot binding'
+    const suite = JSON.parse(conformance.bytes.toString('utf8'))
+    validateConformance(suite, bank, independentlyDecoded)
+    check(current, true, `${suite.cases.length} nonempty same-snapshot cases`)
+    current = 'bundle exports'
+    const api = loadLmfpdBundle(paths.bundle)
+    const exported = ['generateChallenges', 'parseNumbers', 'decodeDetector', 'analyzeSharedOutputs']
+    check(current, exported.every(name => typeof api[name] === 'function'), exported.join(', '))
     const parsed = api.parseNumbers('1, 2, 3')
-    pass(checks, 'parseNumbers smoke', Array.isArray(parsed) && parsed.join(',') === '1,2,3', JSON.stringify(parsed))
-  } catch (error) {
-    pass(checks, 'parseNumbers smoke', false, error.message)
-  }
-
-  try {
-    const challenges = api.generateChallenges(3)
-    const ok =
-      Array.isArray(challenges) &&
-      challenges.length === 3 &&
-      new Set(challenges.map((item) => item.expected_count)).size === 3 &&
-      challenges.every((item) => typeof item.prompt === 'string' && item.prompt.includes(String(item.expected_count)))
-    pass(checks, 'generateChallenges smoke', ok, ok ? challenges.map((item) => item.expected_count).join(',') : 'invalid challenges')
-  } catch (error) {
-    pass(checks, 'generateChallenges smoke', false, error.message)
-  }
-
-  const detectorBytes = await readFile(paths.detector)
-  pass(checks, 'detector size', detectorBytes.length === EXPECTED_DETECTOR_BYTES, `${detectorBytes.length} bytes (expected ${EXPECTED_DETECTOR_BYTES})`)
-
-  let detector
-  try {
-    detector = api.decodeDetector(detectorBytes)
-  } catch (error) {
-    pass(checks, 'detector decode', false, error.message)
-    return { ok: false, checks, rows, info: null }
-  }
-  pass(checks, 'detector decode', detector?.schema === 'shared-detector-v2', String(detector?.schema))
-
-  const modelsBytes = await readFile(paths.models)
-  let bank
-  try {
-    bank = JSON.parse(modelsBytes.toString('utf8'))
-  } catch (error) {
-    pass(checks, 'models.json parse', false, error.message)
-    return { ok: false, checks, rows, info: null }
-  }
-  pass(checks, 'models.json schema', bank.schema === 'robust-number-fingerprint-bank', String(bank.schema))
-  pass(checks, 'models.json model_count', bank.model_count === bank.models?.length, `${bank.model_count} vs ${bank.models?.length}`)
-  pass(checks, 'models.json built_at', typeof bank.built_at === 'string' && bank.built_at.length > 0, String(bank.built_at))
-  pass(
-    checks,
-    'models.json minimum_valid_numbers',
-    bank.minimum_valid_numbers === EXPECTED_MINIMUM_VALID_NUMBERS,
-    String(bank.minimum_valid_numbers),
-  )
-  pass(
-    checks,
-    'models.json recommended_queries',
-    bank.recommended_queries === EXPECTED_RECOMMENDED_QUERIES,
-    String(bank.recommended_queries),
-  )
-
-  const bankBuiltAt = bank.built_at === detector.bank_built_at
-  const bankCount = Array.isArray(bank.models) && bank.models.length === detector.model_ids.length
-  const bankOrder = bankCount && bank.models.every((model, index) => model.id === detector.model_ids[index])
-  const bankCounts = bankCount && bank.models.every((model, index) => model.response_count === detector.response_counts[index])
-  pass(checks, 'bank built_at matches detector', bankBuiltAt, `${bank.built_at} vs ${detector.bank_built_at}`)
-  pass(checks, 'bank model count matches detector', bankCount, `${bank.models?.length} vs ${detector.model_ids.length}`)
-  pass(checks, 'bank model order/ids match detector', bankOrder, bankOrder ? `${detector.model_ids.length} ids` : 'mismatch')
-  pass(checks, 'bank response counts match detector', bankCounts, bankCounts ? 'ok' : 'mismatch')
-  pass(
-    checks,
-    'supportsSharedDetector',
-    detector.schema === 'shared-detector-v2' && bankBuiltAt && bankCount && bankOrder && bankCounts,
-  )
-
-  const licenseText = await readFile(paths.license, 'utf8')
-  pass(checks, 'LICENSE is MIT', licenseText.includes('MIT License'), '')
-  pass(checks, 'LICENSE copyright', licenseText.includes(MIT_NOTICE), MIT_NOTICE)
-
-  const detectorSha = sha256(detectorBytes)
-  const modelsSha = sha256(modelsBytes)
-  if (expectedVersion) {
-    pass(checks, 'VERSION upstream', expectedVersion.upstream === UPSTREAM_REPO, String(expectedVersion.upstream))
-    pass(checks, 'VERSION built_at', expectedVersion.built_at === bank.built_at, `${expectedVersion.built_at} vs ${bank.built_at}`)
-    pass(checks, 'VERSION model_count', expectedVersion.model_count === bank.model_count, `${expectedVersion.model_count} vs ${bank.model_count}`)
-    pass(checks, 'VERSION detector sha256', expectedVersion.detector_sha256 === detectorSha, expectedVersion.detector_sha256)
-    pass(checks, 'VERSION models sha256', expectedVersion.models_sha256 === modelsSha, expectedVersion.models_sha256)
-    pass(checks, 'VERSION license', expectedVersion.license === 'MIT', String(expectedVersion.license))
-  }
-
-  const suite = JSON.parse(conformance.bytes.toString('utf8'))
-  pass(
-    checks,
-    'conformance built_at',
-    suite.data?.built_at === bank.built_at,
-    `${suite.data?.built_at} vs ${bank.built_at}`,
-  )
-
-  const actuals = new Map()
-  for (const item of suite.cases) {
-    const expected = item.expected
-    let actual = null
-    try {
-      actual = api.analyzeSharedOutputs(item.outputs, bank, detector, { allowPartial: !item.strict })
-    } catch (error) {
-      rows.push({ name: item.name, expected: expected.decision, actual: 'threw', detail: error.message, ok: false })
-      continue
+    check('parseNumbers smoke', Array.isArray(parsed) && parsed.join(',') === '1,2,3')
+    const challenges = api.generateChallenges(EXPECTED_RECOMMENDED_QUERIES)
+    check('generateChallenges sample80/3', Array.isArray(challenges) && challenges.length === 3 && new Set(challenges.map(c => c.expected_count)).size === 3 && challenges.every(c => Number.isSafeInteger(c.expected_count) && c.expected_count >= EXPECTED_MINIMUM_VALID_NUMBERS && typeof c.prompt === 'string' && c.prompt.includes(String(c.expected_count))))
+    current = 'candidate decoder matches independent codec'
+    const detector = api.decodeDetector(detectorBytes)
+    compareSemantic(detector, independentlyDecoded, 'decodedDetector')
+    check(current, true)
+    for (const item of suite.cases) {
+      let actual
+      try {
+        const outputs = prepareOutputs(item.outputs, item.strict, api)
+        actual = canonicalAnalysis(api.analyzeSharedOutputs(outputs, bank, detector, { allowPartial: !item.strict }))
+        compareSemantic(actual, item.expected)
+        rows.push({ name: item.name, expected: item.expected.decision, actual: actual.decision, detail: `all fields, ${actual.results.length} ranked entries`, ok: true })
+      } catch (error) {
+        rows.push({ name: item.name, expected: item.expected.decision, actual: actual?.decision ?? 'threw', detail: error.message, ok: false })
+      }
     }
-    const decision = actual.decision ?? 'scored'
-    actuals.set(item.name, { ...actual, decision })
-    const probabilityOk = (actual.probability === null) === (expected.probability === null)
-    const topOk = expected.results.length === 0 || actual.results[0]?.model === expected.results[0].model
-    const ok =
-      decision === expected.decision &&
-      actual.prediction === expected.prediction &&
-      actual.used_outputs === expected.used_outputs &&
-      probabilityOk &&
-      actual.results.length === expected.results.length &&
-      topOk
-    rows.push({
-      name: item.name,
-      expected: `${expected.decision}/${expected.prediction || '-'}`,
-      actual: `${decision}/${actual.prediction || '-'}`,
-      detail: `used=${actual.used_outputs} top=${actual.results[0]?.model ?? '-'} p=${actual.probability === null ? 'null' : actual.probability.toFixed(6)}`,
-      ok,
-    })
+    info = { builtAt: bank.built_at, modelCount: bank.model_count, detectorSha, modelsSha, bundleSha, licenseSha, conformance: conformance.origin }
+  } catch (error) {
+    pass(checks, current, false, error.message)
   }
-
-  for (const [name, predicate] of Object.entries(REQUIRED_CASES)) {
-    const actual = actuals.get(name)
-    const ok = Boolean(actual) && predicate(actual)
-    rows.push({
-      name: `required:${name}`,
-      expected: 'task contract',
-      actual: actual ? `${actual.decision}/${actual.prediction || '-'}` : 'missing',
-      detail: '',
-      ok,
-    })
-  }
-
-  const ok = checks.every((check) => check.ok) && rows.every((row) => row.ok)
-  return {
-    ok,
-    checks,
-    rows,
-    info: {
-      builtAt: bank.built_at,
-      modelCount: bank.model_count,
-      detectorSha,
-      modelsSha,
-      conformance: conformance.origin,
-    },
-  }
+  return { ok: checks.every(c => c.ok) && rows.length > 0 && rows.every(r => r.ok), checks, rows, info }
 }
 
 function printReport(result) {
@@ -483,40 +370,148 @@ function printReport(result) {
   console.log(`\nResult: ${passed}/${total} checks passed${result.ok ? '' : ' — FAILED'}`)
 }
 
-async function publish(staged, dest) {
-  for (const key of Object.keys(ARTIFACTS)) {
-    await mkdir(path.dirname(dest[key]), { recursive: true })
-    await copyFile(staged[key], dest[key])
+async function statIfPresent(file) {
+  try { return await lstat(file) } catch (error) { if (error.code === 'ENOENT') return null; throw error }
+}
+
+async function canonicalDestination(file) {
+  const suffix = []
+  let ancestor = path.resolve(file)
+  while (!(await statIfPresent(ancestor))) {
+    suffix.unshift(path.basename(ancestor))
+    const parent = path.dirname(ancestor)
+    if (parent === ancestor) throw new Error(`Cannot resolve destination: ${file}`)
+    ancestor = parent
+  }
+  return path.join(await realpath(ancestor), ...suffix)
+}
+
+async function validateDestinations(options, root) {
+  if (options.artifactRoot) {
+    const target = await canonicalDestination(options.artifactRoot)
+    // An explicit candidate destination must never address the checked-in snapshot.
+    for (const file of Object.values(artifactPaths(root))) {
+      if (within(target, await canonicalDestination(file))) throw new Error('--artifact-root must be separate from the project artifacts.')
+    }
+    const stat = await statIfPresent(options.artifactRoot)
+    if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || (await readdir(options.artifactRoot)).length)) throw new Error('--artifact-root must be a new or empty regular directory.')
+  }
+  if (options.resultFile) {
+    const target = await canonicalDestination(options.resultFile)
+    if (options.artifactRoot && within(await canonicalDestination(options.artifactRoot), target)) throw new Error('--result-file must be outside --artifact-root (including symlinks).')
+    if (await statIfPresent(options.resultFile)) throw new Error('--result-file already exists; use a fresh result path.')
+    if (Object.values(artifactPaths(root)).some(file => path.resolve(file) === target)) throw new Error('--result-file cannot overwrite a project artifact.')
   }
 }
 
-async function sync(options) {
-  const ref = options.ref ?? DEFAULT_REF
+export async function changedArtifacts(staged, baseline) {
+  for (const key of Object.keys(ARTIFACTS)) {
+    let bytes
+    try { bytes = await readFile(baseline[key]) } catch (error) { if (error.code === 'ENOENT') return true; throw error }
+    if (!(await readFile(staged[key])).equals(bytes)) return true
+  }
+  return false
+}
+
+/** Copy to a private sibling first; a failed copy never exposes a partial candidate. */
+export async function publishCandidate(staged, root) {
+  const stat = await statIfPresent(root)
+  if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || (await readdir(root)).length)) throw new Error('Candidate root must be new or empty.')
+  await mkdir(path.dirname(root), { recursive: true })
+  const pending = await mkdtemp(path.join(path.dirname(root), '.lmfpd-candidate-'))
+  try {
+    const dest = artifactPaths(pending)
+    for (const key of Object.keys(ARTIFACTS)) {
+      await mkdir(path.dirname(dest[key]), { recursive: true })
+      await copyFile(staged[key], dest[key])
+    }
+    await rename(pending, root)
+  } finally {
+    await rm(pending, { recursive: true, force: true })
+  }
+}
+
+export async function publishResult(file, result, io = { writeFile, rename }) {
+  if (await statIfPresent(file)) throw new Error(`Result path already exists: ${file}`)
+  await mkdir(path.dirname(file), { recursive: true })
+  const pending = await mkdtemp(path.join(path.dirname(file), '.lmfpd-result-'))
+  try {
+    const temp = path.join(pending, 'result.json')
+    await io.writeFile(temp, `${JSON.stringify(result)}\n`, { flag: 'wx' })
+    await io.rename(temp, file)
+  } finally {
+    await rm(pending, { recursive: true, force: true })
+  }
+}
+
+/** The legacy manual path publishes only validated bytes and rolls back copy errors. */
+async function publishLocal(staged, dest, stage) {
+  const backups = {}
+  const pending = {}
+  const replaced = []
+  try {
+    for (const key of Object.keys(ARTIFACTS)) {
+      await mkdir(path.dirname(dest[key]), { recursive: true })
+      const stat = await statIfPresent(dest[key])
+      if (stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error(`Refusing non-regular artifact: ${dest[key]}`)
+      backups[key] = stat ? path.join(stage, `backup-${key}`) : null
+      if (stat) await copyFile(dest[key], backups[key])
+      const dir = await mkdtemp(path.join(path.dirname(dest[key]), '.lmfpd-publish-'))
+      pending[key] = path.join(dir, key)
+      await copyFile(staged[key], pending[key])
+    }
+    for (const key of Object.keys(ARTIFACTS)) {
+      await rename(pending[key], dest[key])
+      replaced.push(key)
+    }
+  } catch (error) {
+    for (const key of replaced.reverse()) {
+      if (backups[key]) await copyFile(backups[key], dest[key])
+      else await rm(dest[key], { force: true })
+    }
+    throw new Error(`Local publication failed and was rolled back: ${error.message}`)
+  } finally {
+    for (const file of Object.values(pending)) await rm(path.dirname(file), { recursive: true, force: true })
+  }
+}
+
+export async function sync(options, { root = ROOT, build = buildBundle } = {}) {
+  await validateDestinations(options, root)
+  const baseline = artifactPaths(root)
+  const currentVersion = JSON.parse(await readFile(baseline.version, 'utf8'))
+  const ref = options.latest ? await resolveLatest() : requireSha(options.ref ?? currentVersion.upstream_ref, 'upstream ref')
   console.log(`Syncing ${UPSTREAM_REPO} @ ${ref}`)
   if (options.upstream) {
-    console.log(`Using local upstream snapshot: ${options.upstream}`)
-    await assertUpstreamRef(options.upstream, ref)
+    console.log(`Using immutable local upstream snapshot: ${options.upstream}@${ref}`)
   }
 
-  const stage = await mkdtemp(path.join(tmpdir(), 'lmfpd-sync-'))
+  const stage = await mkdtemp('/tmp/opencode/lmfpd-sync-')
   const staged = stagePaths(stage)
   try {
-    const sourceDir = path.join(stage, 'src')
-    await mkdir(sourceDir, { recursive: true })
-    await stageSources(sourceDir, { upstream: options.upstream, ref })
-
-    console.log('Building lmfpd-core.js ...')
-    await buildBundle(sourceDir, staged.bundle, ref)
-
-    const bankBytes = await readSource('data/unified_bank.json', { upstream: options.upstream, ref })
+    const source = { upstream: options.upstream, ref }
+    const [bankBytes, detectorBytes, conformance] = await Promise.all([
+      readSource('data/unified_bank.json', source),
+      readSource('data/shared_detector.bin', source),
+      loadConformance({ ...source, conformance: options.conformance }),
+    ])
     const bank = JSON.parse(bankBytes.toString('utf8'))
     const models = buildModels(bank)
+    // Reject stale fixtures and malformed data before running any candidate code.
+    const detector = validateDetectorBinary(detectorBytes)
+    validateDetector(detector, models)
+    validateConformance(JSON.parse(conformance.bytes.toString('utf8')), models, detector)
+    const sourceDir = path.join(stage, 'src')
+    await mkdir(sourceDir, { recursive: true })
+    await stageSources(sourceDir, source)
+
+    console.log('Building lmfpd-core.js ...')
+    await build(sourceDir, staged.bundle, ref)
+
     console.log(`Slimming bank metadata: ${models.model_count} models, built_at ${models.built_at}`)
     await writeFile(staged.models, `${JSON.stringify(models, null, 2)}\n`)
 
     console.log('Copying detector snapshot ...')
     await copyFile(path.join(sourceDir, 'LICENSE'), staged.license)
-    const detectorBytes = await readSource('data/shared_detector.bin', { upstream: options.upstream, ref })
     await writeFile(staged.detector, detectorBytes)
 
     const version = {
@@ -526,26 +521,27 @@ async function sync(options) {
       model_count: models.model_count,
       detector_sha256: sha256(detectorBytes),
       models_sha256: sha256(await readFile(staged.models)),
+      bundle_sha256: sha256(await readFile(staged.bundle)),
+      license_sha256: sha256(await readFile(staged.license)),
       license: 'MIT',
     }
     await writeFile(staged.version, `${JSON.stringify(version, null, 2)}\n`)
 
-    const conformance = await loadConformance({ upstream: options.upstream, ref, conformance: options.conformance })
     const result = await verifyArtifacts(staged, { conformance, expectedVersion: version })
     printReport(result)
     if (!result.ok) {
       throw new Error('Verification failed; nothing was published.')
     }
 
-    console.log(`\nPublishing ${Object.keys(ARTIFACTS).length} files ...`)
-    await publish(staged, artifactPaths(ROOT))
-    try {
-      await cacheConformance(ref, conformance.bytes)
-    } catch (error) {
-      console.warn(`! Could not cache the conformance fixture: ${error.message}`)
-    }
+    const changed = await changedArtifacts(staged, baseline)
+    console.log(`\nPublishing ${Object.keys(ARTIFACTS).length} files (changed=${changed}) ...`)
+    if (options.artifactRoot) await publishCandidate(staged, options.artifactRoot)
+    else await publishLocal(staged, baseline, stage)
+    const report = { upstream_ref: ref, changed }
+    if (options.resultFile) await publishResult(options.resultFile, report)
     console.log(`Published detector ${result.info.detectorSha}`)
     console.log(`Published models   ${result.info.modelsSha}`)
+    return report
   } finally {
     if (options.keepStage) {
       console.error(`Staging directory kept: ${stage}`)
@@ -556,7 +552,7 @@ async function sync(options) {
 }
 
 async function verifyOnly(options) {
-  const paths = artifactPaths(ROOT)
+  const paths = artifactPaths(options.artifactRoot ?? ROOT)
   let version
   try {
     version = JSON.parse(await readFile(paths.version, 'utf8'))
@@ -574,7 +570,7 @@ async function verifyOnly(options) {
 
   console.log(`Verifying committed snapshot: ${UPSTREAM_REPO} @ ${ref}`)
   const conformance = await loadConformance({ upstream: options.upstream, ref, conformance: options.conformance })
-  const result = await verifyArtifacts(paths, { conformance, expectedVersion: version })
+  const result = await verifyArtifacts(paths, { conformance, expectedVersion: version, allowLegacy: true })
   printReport(result)
   if (!result.ok) throw new Error('Committed snapshot failed verification.')
   console.log(`\nSnapshot is valid: ${result.info.modelCount} models, built_at ${result.info.builtAt}`)
@@ -590,7 +586,7 @@ async function main() {
   else await sync(options)
 }
 
-main().catch((error) => {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => {
   console.error(`\nERROR: ${error.message}`)
   if (error.stack && process.env.LMFPD_DEBUG) console.error(error.stack)
   process.exitCode = 1

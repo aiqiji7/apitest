@@ -1,0 +1,140 @@
+name: Sync LMFPD snapshot
+
+on:
+  schedule:
+    # UTC 03:17 / Beijing 11:17; GitHub may delay scheduled runs.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lmfpd-sync-main
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      base_sha: ${{ steps.base.outputs.sha }}
+      upstream_ref: ${{ steps.metadata.outputs.upstream_ref }}
+      changed: ${{ steps.metadata.outputs.changed }}
+      version_sha256: ${{ steps.metadata.outputs.version_sha256 }}
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Record trusted base before executing candidate code
+        id: base
+        run: |
+          base_sha="$(git rev-parse HEAD)"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          printf 'sha=%s\n' "$base_sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test trusted sync and publication code without write credentials
+        run: |
+          mkdir -p /tmp/opencode
+          node --test tests/sync-lmfpd*.test.mjs tests/lmfpd-publish*.test.mjs
+      - name: Build and validate latest same-SHA candidate
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/lmfpd-candidate
+          RESULT_FILE: ${{ runner.temp }}/lmfpd-result.json
+        run: node scripts/sync-lmfpd.mjs --latest --artifact-root "$ARTIFACT_ROOT" --result-file "$RESULT_FILE"
+      - name: Bind candidate metadata and manifest digest
+        id: metadata
+        env:
+          ARTIFACT_ROOT: ${{ runner.temp }}/lmfpd-candidate
+          RESULT_FILE: ${{ runner.temp }}/lmfpd-result.json
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs'
+          import { createHash } from 'node:crypto'
+          import path from 'node:path'
+          const result = JSON.parse(readFileSync(process.env.RESULT_FILE, 'utf8'))
+          if (!/^[0-9a-f]{40}$/.test(result.upstream_ref) || typeof result.changed !== 'boolean') {
+            throw new Error('Invalid validated candidate result')
+          }
+          const version = readFileSync(path.join(process.env.ARTIFACT_ROOT, 'assets/data/lmfpd/VERSION.json'))
+          const digest = createHash('sha256').update(version).digest('hex')
+          appendFileSync(process.env.GITHUB_OUTPUT,
+            `upstream_ref=${result.upstream_ref}\nchanged=${result.changed}\nversion_sha256=${digest}\n`)
+          NODE
+      - name: Upload validated candidate only
+        id: artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lmfpd-candidate
+          path: ${{ runner.temp }}/lmfpd-candidate/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+      - name: Explain candidate failure
+        if: failure()
+        run: |
+          printf '%s\n' 'LMFPD candidate failed validation or artifact creation. No commit or deployment will run; inspect the failing step for details.' >> "$GITHUB_STEP_SUMMARY"
+
+  commit:
+    needs: candidate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      deploy_sha: ${{ steps.publish.outputs.deploy_sha }}
+    steps:
+      - name: Checkout trusted base on a separate runner
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.candidate.outputs.base_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Download candidate by immutable ID from this run
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.candidate.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/lmfpd-candidate
+      - name: Validate bytes, commit only five artifacts, and push normally
+        id: publish
+        env:
+          BASE_SHA: ${{ needs.candidate.outputs.base_sha }}
+          UPSTREAM_REF: ${{ needs.candidate.outputs.upstream_ref }}
+          VERSION_SHA256: ${{ needs.candidate.outputs.version_sha256 }}
+          ARTIFACT_ROOT: ${{ runner.temp }}/lmfpd-candidate
+        run: |
+          node scripts/publish-lmfpd.mjs --base-sha "$BASE_SHA" --artifact-root "$ARTIFACT_ROOT" --upstream-ref "$UPSTREAM_REF" --version-sha256 "$VERSION_SHA256" --output "$GITHUB_OUTPUT"
+      - name: Publication result
+        if: success()
+        env:
+          DEPLOY_SHA: ${{ steps.publish.outputs.deploy_sha }}
+        run: |
+          if [[ -n "$DEPLOY_SHA" ]]; then
+            [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+            printf 'Validated main snapshot ready for Pages: `%s`.\n' "$DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' 'Main advanced during validation or publication. No deployment requested; the next run will use the new base.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Explain publication failure
+        if: failure()
+        run: |
+          printf '%s\n' 'LMFPD publication failed. No Pages deployment requested. Inspect byte validation or push errors, repository Actions write permission, and main branch rules.' >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: commit
+    if: needs.commit.outputs.deploy_sha != ''
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/static.yml
+    with:
+      ref: ${{ needs.commit.outputs.deploy_sha }}

@@ -39,8 +39,11 @@
     cacheMode: 'idb'
   };
   var dataPromise = null;
+  var snapshotPromise = null;
   var corePromise = null;
+  var loadedCore = null;
   var memoryDetectorCache = Object.create(null);
+  var ignoredDetectorCache = Object.create(null);
   var lastProgress = -1;
 
   var samples = [];
@@ -199,28 +202,124 @@
   // Core + data loading
   // ---------------------------------------------------------------------
 
+  function validHash(value) {
+    return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  }
+
+  function validateVersion(version) {
+    if (!version || typeof version !== 'object' || Array.isArray(version)
+      || version.upstream !== 'Ikaleio/lm-detector' || version.license !== 'MIT'
+      || typeof version.upstream_ref !== 'string' || !/^[0-9a-f]{40}$/.test(version.upstream_ref)
+      || typeof version.built_at !== 'string' || version.built_at.length > 128
+      || !Number.isFinite(Date.parse(version.built_at))
+      || !Number.isSafeInteger(version.model_count) || version.model_count < 1
+      || !validHash(version.models_sha256) || !validHash(version.detector_sha256)) {
+      throw new Error('VERSION.json 格式不正确：版本、构建时间、模型数量或 SHA-256 摘要无效');
+    }
+    var hasBundle = Object.prototype.hasOwnProperty.call(version, 'bundle_sha256');
+    var hasLicense = Object.prototype.hasOwnProperty.call(version, 'license_sha256');
+    if (hasBundle !== hasLicense || (hasBundle && (!validHash(version.bundle_sha256) || !validHash(version.license_sha256)))) {
+      throw new Error('VERSION.json 格式不正确：核心与许可 SHA-256 摘要必须同时有效');
+    }
+  }
+
+  function requireIntegritySupport() {
+    if (!window.crypto || !window.crypto.subtle || typeof window.crypto.subtle.digest !== 'function') {
+      throw new Error('当前环境不支持 SHA-256 完整性校验，请使用支持 Web Crypto 的浏览器通过 HTTPS 或 localhost 访问');
+    }
+  }
+
+  function ensureSnapshot() {
+    if (snapshotPromise) return snapshotPromise;
+    snapshotPromise = (async function () {
+      setDataLoading('正在下载参考数据版本信息…');
+      var res = await fetch(DATA_BASE + 'VERSION.json', { cache: 'no-store' });
+      checkDataResponse(res, 'VERSION.json');
+      var version = await res.json();
+      validateVersion(version);
+      requireIntegritySupport();
+      // Only a failed acquisition may retry VERSION. All later callers, including
+      // forced data retries, keep this page's algorithm and data snapshot fixed.
+      return Object.freeze(version);
+    })();
+    var current = snapshotPromise;
+    current.catch(function () {
+      if (snapshotPromise === current) snapshotPromise = null;
+    });
+    return current;
+  }
+
+  function versionedUrl(path, hash) {
+    return path + '?v=' + encodeURIComponent(hash);
+  }
+
+  function checkDataResponse(res, name) {
+    if (!res.ok) throw new Error(name + ' HTTP ' + res.status + (res.statusText ? ' ' + res.statusText : ''));
+  }
+
+  async function verifyBytes(bytes, expectedHash, name) {
+    requireIntegritySupport();
+    var digest = new Uint8Array(await window.crypto.subtle.digest('SHA-256', bytes));
+    var actual = Array.from(digest, function (byte) { return byte.toString(16).padStart(2, '0'); }).join('');
+    if (actual !== expectedHash) {
+      var err = new Error(name + ' SHA-256 校验失败：文件与本页版本不匹配，请重试或刷新页面');
+      err.lmfpdIntegrityError = true;
+      throw err;
+    }
+  }
+
+  function bundleIntegrity(hash) {
+    var bytes = '';
+    for (var i = 0; i < hash.length; i += 2) bytes += String.fromCharCode(parseInt(hash.slice(i, i + 2), 16));
+    return 'sha256-' + btoa(bytes);
+  }
+
   function ensureCore() {
-    if (window.LMFPD) return Promise.resolve(window.LMFPD);
+    if (loadedCore) {
+      window.LMFPD = loadedCore;
+      return Promise.resolve(loadedCore);
+    }
     if (corePromise) return corePromise;
 
-    corePromise = new Promise(function (resolve, reject) {
-      var script = document.createElement('script');
-      script.src = CORE_SRC;
-      script.async = true;
-      script.onload = function () {
-        if (window.LMFPD) resolve(window.LMFPD);
-        else reject(new Error('检测核心脚本未暴露 LMFPD'));
-      };
-      script.onerror = function () { reject(new Error('无法加载检测核心脚本')); };
-      document.head.appendChild(script);
+    corePromise = ensureSnapshot().then(function (version) {
+      return new Promise(function (resolve, reject) {
+        var script = document.createElement('script');
+        script.src = versionedUrl(CORE_SRC, version.bundle_sha256 || version.upstream_ref);
+        script.async = true;
+        if (version.bundle_sha256) {
+          script.integrity = bundleIntegrity(version.bundle_sha256);
+          script.crossOrigin = 'anonymous';
+        }
+        // An arbitrary preloaded global has no binding to the pinned manifest.
+        window.LMFPD = undefined;
+        function fail(message) {
+          script.onload = script.onerror = null;
+          if (script.parentNode) script.parentNode.removeChild(script);
+          window.LMFPD = undefined;
+          reject(new Error(message));
+        }
+        script.onload = function () {
+          var core = window.LMFPD;
+          if (!core || !['parseNumbers', 'generateChallenges', 'decodeDetector', 'analyzeSharedOutputs'].every(function (name) {
+            return typeof core[name] === 'function';
+          })) {
+            fail('检测核心脚本未暴露完整的 LMFPD 接口');
+            return;
+          }
+          loadedCore = core;
+          script.onload = script.onerror = null;
+          resolve(core);
+        };
+        script.onerror = function () { fail('无法加载检测核心脚本或核心 SHA-256 完整性校验失败，请重试或刷新页面'); };
+        document.head.appendChild(script);
+      });
     });
 
     var current = corePromise;
-    function reset() {
+    current.catch(function () {
       if (corePromise === current) corePromise = null;
-    }
-    corePromise.then(reset, reset);
-    return corePromise;
+    });
+    return current;
   }
 
   function ensureDataLoaded(force) {
@@ -243,17 +342,15 @@
     clearError();
 
     try {
+      var version = await ensureSnapshot();
       await ensureCore();
 
-      setDataLoading('正在下载参考数据版本信息…');
-      var versionRes = await fetch(DATA_BASE + 'VERSION.json', { cache: 'no-store' });
-      if (!versionRes.ok) throw new Error('VERSION.json HTTP ' + versionRes.status);
-      var version = await versionRes.json();
-
       setDataLoading('正在下载模型元数据…');
-      var modelsRes = await fetch(DATA_BASE + 'models.json', { cache: 'no-store' });
-      if (!modelsRes.ok) throw new Error('models.json HTTP ' + modelsRes.status);
-      var models = await modelsRes.json();
+      var modelsRes = await fetch(versionedUrl(DATA_BASE + 'models.json', version.models_sha256), { cache: 'no-store' });
+      checkDataResponse(modelsRes, 'models.json');
+      var modelsBytes = new Uint8Array(await modelsRes.arrayBuffer());
+      await verifyBytes(modelsBytes, version.models_sha256, 'models.json');
+      var models = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(modelsBytes));
 
       setDataLoading('正在加载检测器数据…');
       var bytes = await loadDetectorBytes(version);
@@ -287,23 +384,47 @@
   }
 
   async function loadDetectorBytes(version) {
-    var key = String((version && version.built_at) || '') + ':' + String((version && version.detector_sha256) || '');
+    var key = version.built_at + ':' + version.detector_sha256;
 
     if (memoryDetectorCache[key]) {
-      dataState.cacheMode = 'memory';
-      return memoryDetectorCache[key].slice();
+      try {
+        var memoryBytes = memoryDetectorCache[key].slice();
+        await verifyBytes(memoryBytes, version.detector_sha256, '检测器内存缓存');
+        dataState.cacheMode = 'memory';
+        return memoryBytes;
+      } catch (err) {
+        if (!err.lmfpdIntegrityError) throw err;
+        delete memoryDetectorCache[key];
+        ignoredDetectorCache[key] = true;
+      }
     }
 
     var cached = null;
-    try { cached = await idbGet(key); } catch (e) { cached = null; }
+    if (!ignoredDetectorCache[key]) {
+      try { cached = await idbGet(key); } catch (e) { cached = null; }
+    }
     if (cached) {
-      var cachedBytes = cached instanceof Uint8Array ? cached : new Uint8Array(cached);
-      memoryDetectorCache[key] = cachedBytes.slice();
-      dataState.cacheMode = 'idb';
-      return cachedBytes;
+      var cachedBytes = null;
+      try { cachedBytes = cached instanceof Uint8Array ? cached.slice() : new Uint8Array(cached); } catch (e) {
+        ignoredDetectorCache[key] = true;
+      }
+      if (cachedBytes) {
+        try {
+          await verifyBytes(cachedBytes, version.detector_sha256, '检测器 IndexedDB 缓存');
+          memoryDetectorCache[key] = cachedBytes.slice();
+          dataState.cacheMode = 'idb';
+          return cachedBytes;
+        } catch (err) {
+          if (!err.lmfpdIntegrityError) throw err;
+          // Ignore only this exact corrupt key for the page. Never fall back to it
+          // if the single fresh download below also fails integrity verification.
+          ignoredDetectorCache[key] = true;
+        }
+      }
     }
 
-    var downloaded = await downloadDetector();
+    var downloaded = await downloadDetector(version);
+    await verifyBytes(downloaded, version.detector_sha256, 'shared_detector.bin');
     memoryDetectorCache[key] = downloaded.slice();
 
     var stored = false;
@@ -317,9 +438,9 @@
     return downloaded;
   }
 
-  async function downloadDetector() {
-    var res = await fetch(DATA_BASE + 'shared_detector.bin', { cache: 'no-store' });
-    if (!res.ok) throw new Error('shared_detector.bin HTTP ' + res.status);
+  async function downloadDetector(version) {
+    var res = await fetch(versionedUrl(DATA_BASE + 'shared_detector.bin', version.detector_sha256), { cache: 'no-store' });
+    checkDataResponse(res, 'shared_detector.bin');
 
     var total = Number(res.headers.get('content-length')) || 0;
     if (!res.body || typeof res.body.getReader !== 'function') {
@@ -352,12 +473,18 @@
   }
 
   function validateData(models, detector, version) {
-    if (!models || !Array.isArray(models.models)) {
+    if (!models || models.schema !== 'robust-number-fingerprint-bank' || !Array.isArray(models.models)
+      || !Number.isSafeInteger(models.model_count) || models.model_count < 1
+      || models.minimum_valid_numbers !== MIN_ABSOLUTE_NUMBERS || models.recommended_queries !== SAMPLE_COUNT) {
       throw new Error('参考数据格式不正确：缺少模型列表');
     }
-    if (!detector || !Array.isArray(detector.model_ids) || !Array.isArray(detector.response_counts)) {
+    if (!detector || detector.schema !== 'shared-detector-v2' || !Array.isArray(detector.model_ids)
+      || !Array.isArray(detector.response_counts) || !validHash(detector.base_sha256)
+      || !detector.ranker || typeof detector.ranker !== 'object' || Array.isArray(detector.ranker)) {
       throw new Error('参考数据格式不正确：检测器缺少模型索引');
     }
+    validateFiniteData(models);
+    validateFiniteData(detector);
     if (version && version.built_at && version.built_at !== models.built_at) {
       throw new Error('参考数据版本不匹配：VERSION.json 与 models.json 的构建时间不一致');
     }
@@ -370,17 +497,30 @@
     if (version && typeof version.model_count === 'number' && version.model_count !== detector.model_ids.length) {
       throw new Error('参考数据与检测器版本不匹配：VERSION.json 模型数量不一致');
     }
-    if (models.models.length !== detector.model_ids.length) {
+    if (models.models.length !== detector.model_ids.length || detector.response_counts.length !== detector.model_ids.length) {
       throw new Error('参考数据与检测器版本不匹配：模型列表长度不一致');
     }
+    var seen = Object.create(null);
     for (var i = 0; i < models.models.length; i += 1) {
       var model = models.models[i];
-      if (!model || model.id !== detector.model_ids[i]) {
+      if (!model || !['id', 'display_name', 'family', 'family_name'].every(function (name) {
+        return typeof model[name] === 'string' && model[name].length > 0;
+      }) || seen[model.id] || model.id !== detector.model_ids[i]) {
         throw new Error('参考数据与检测器版本不匹配：模型顺序不一致（第 ' + (i + 1) + ' 项）');
       }
-      if (model.response_count !== detector.response_counts[i]) {
+      seen[model.id] = true;
+      if (!Number.isSafeInteger(model.response_count) || model.response_count < 1 || model.response_count !== detector.response_counts[i]) {
         throw new Error('参考数据与检测器版本不匹配：响应数量不一致（第 ' + (i + 1) + ' 项）');
       }
+    }
+  }
+
+  function validateFiniteData(value) {
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new Error('参考数据格式不正确：包含非有限数值');
+    }
+    if (value && typeof value === 'object') {
+      Object.keys(value).forEach(function (key) { validateFiniteData(value[key]); });
     }
   }
 

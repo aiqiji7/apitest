@@ -9,35 +9,95 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
+  # The sync workflow explicitly calls this: GITHUB_TOKEN pushes do not trigger push.
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact validated main commit to deploy
+        required: true
+        type: string
+
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
-
 jobs:
   # Single deploy job since we're just deploying
   deploy:
+    # Lock only the actual deploy job, so callers never hold this same lock.
+    concurrency:
+      group: "pages"
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve exact Pages commit
+        id: ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_REF: ${{ inputs.ref }}
+          EVENT_SHA: ${{ github.sha }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ -n "$REQUESTED_REF" ]]; then
+            target_sha="$REQUESTED_REF"
+          elif [[ "$EVENT_NAME" == push ]]; then
+            target_sha="$EVENT_SHA"
+          elif [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            target_sha="$(gh api "repos/$TARGET_REPOSITORY/commits/main" --jq '.sha')"
+          else
+            printf '%s\n' 'Reusable Pages deployment requires a commit SHA.' >&2
+            exit 1
+          fi
+          [[ "$target_sha" =~ ^[0-9a-f]{40}$ ]] || { printf '%s\n' 'Invalid Pages ref: full commit SHA required.' >&2; exit 1; }
+          printf 'sha=%s\n' "$target_sha" >> "$GITHUB_OUTPUT"
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.sha }}
+          persist-credentials: false
+      - name: Check current main after acquiring Pages lock
+        id: target
+        run: |
+          target="$(git rev-parse HEAD)"
+          [[ "$target" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          current="$(git ls-remote --exit-code origin refs/heads/main)"
+          [[ "$current" =~ ^([0-9a-f]{40})[[:space:]]refs/heads/main$ ]] || exit 1
+          if [[ "$target" == "${BASH_REMATCH[1]}" ]]; then
+            printf 'current=true\nsha=%s\n' "$target" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' 'current=false' >> "$GITHUB_OUTPUT"
+            printf '%s\n' 'Skipping stale Pages target; main has advanced.' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Setup Pages
+        if: steps.target.outputs.current == 'true'
         uses: actions/configure-pages@v5
       - name: Upload artifact
+        if: steps.target.outputs.current == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           # Upload entire repository
           path: '.'
+      - name: Recheck current main immediately before deployment
+        if: steps.target.outputs.current == 'true'
+        id: ready
+        env:
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          current="$(git ls-remote --exit-code origin refs/heads/main)"
+          [[ "$current" =~ ^([0-9a-f]{40})[[:space:]]refs/heads/main$ ]] || exit 1
+          if [[ "$TARGET_SHA" == "${BASH_REMATCH[1]}" ]]; then
+            printf '%s\n' 'current=true' >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' 'current=false' >> "$GITHUB_OUTPUT"
+            printf '%s\n' 'Skipping Pages deployment; main advanced during upload.' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Deploy to GitHub Pages
+        if: steps.ready.outputs.current == 'true'
         id: deployment
         uses: actions/deploy-pages@v4

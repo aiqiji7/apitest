@@ -13,7 +13,7 @@
   - **OpenAI:** 工具调用（Chat Completions/Responses）、搜索（Responses）
   - **Anthropic:** 工具调用
   - **Google Gemini:** 工具调用、搜索、URL 上下文
-  - **模型指纹:** OpenAI Chat Completions / Responses、Anthropic，支持 API 自动采样与手动粘贴评分
+  - **模型指纹:** OpenAI Chat Completions / Responses、Anthropic、Google Gemini，支持 API 自动采样与手动粘贴评分
 - **配置管理与一键默认：**
   - 通过“管理配置”弹窗新增/编辑/删除配置
   - 支持星标“默认配置”，页面加载自动应用
@@ -36,9 +36,9 @@
 3. **选择测试类型：**
    - 首先在“测试内容”中选择厂商（OpenAI / Anthropic / Google / Images）。
    - 然后选择具体的测试场景（如工具调用、搜索等）。页面会自动填充推荐的测试消息。
-   - 如需模型指纹检测，选择「模型指纹」，再选择请求格式后开始检测；也可以切换到「手动粘贴」直接粘贴三条回答评分。
+   - 如需模型指纹检测，在所选模型厂商下选择「模型指纹」场景；OpenAI 使用页面上的 Chat Completions / Responses 切换。点击「开始检测」自动采样，或切换到「手动粘贴」粘贴三条回答后点击「评分」。
 4. **输入用户消息并发送：**
-   - 在文本框输入用户消息，点击“发送测试请求”。模型指纹模式不需要输入用户消息。
+   - 普通测试在文本框输入用户消息，点击“运行测试”。模型指纹场景不需要输入用户消息，使用「开始检测」或「评分」。
 5. **查看结果：**
    - 左侧查看“轮次与消息”，右侧查看“请求与响应”。每个代码块都支持复制。
 
@@ -48,21 +48,48 @@
 
 「模型指纹」入口会把同一组无语义整数任务发送给目标 API 三次，并在浏览器本地与内置参考库比对，给出最相似的候选模型与闭集置信度。
 
-- 支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages；也可以切换到「手动粘贴」，把三条回答直接粘贴进来评分。
+- 支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini；在对应厂商下选择「模型指纹」即可，也可以切换到「手动粘贴」评分。
 - 每条回答至少需要 80 个 1–355 的有效整数；三条齐全才显示置信度，1–2 条只显示 partial ranking。
 - **结果只是参考库内的闭集排序，不是模型身份证明。** 库外模型也会得到“最像”的候选。
-- 参考数据快照：63 个模型，构建时间 `2026-10-25T10:04:10.682171+00:00`，来自上游 commit `1e58ed8`。
-- 检测器数据只在进入「模型指纹」时懒加载（`assets/data/lmfpd/shared_detector.bin`，约 4.6 MB），随后写入浏览器 IndexedDB 缓存。
+- 当前参考库的模型数、构建时间和完整上游 commit 见 [VERSION.json](assets/data/lmfpd/VERSION.json)；页面也会显示实际加载的模型数和构建时间。
+- 算法与参考数据只在进入「模型指纹」时懒加载，下载大小随参考库增长。页面先获取版本清单，再按摘要加载核心与数据，用 SRI 校验核心、Web Crypto SHA-256 校验数据；请通过 HTTPS 或 localhost 访问。
+- 检测器按构建时间和摘要缓存到 IndexedDB，命中缓存后仍校验字节；存储不可用时使用内存。单页固定已取得的快照，部署新版本后刷新页面即可获取，评分过程中不会切换版本。
 - 评分完全在浏览器本地完成；采样请求会直接发送到你配置的 API，不会上传到本项目以外的评分服务。
 
-更新参考数据（维护者）：
+### 参考库自动更新（维护者）
+
+将相关改动提交并推送到默认分支 `main` 后，Actions 中的 **Sync LMFPD snapshot** 每天按 `17 3 * * *`（UTC 03:17，北京时间 11:17）检查上游，也可在该工作流选择 **Run workflow** 手动运行。启用全自动更新需确认：
+
+- 仓库已启用 GitHub Actions，允许同步 job 使用 `contents: write`（仓库 Settings → Actions → General 的 Workflow permissions，以及组织策略需允许）。
+- `main` 分支规则允许 `github-actions[bot]` 正常快进推送；脚本使用普通 push，不会绕过分支保护。
+- Settings → Pages → Source 选择 **GitHub Actions**；若希望部署也全自动，`github-pages` 环境需允许来自 `main` 的部署，且不要求人工审批。
+
+流程只使用仓库自带的 `GITHUB_TOKEN` 和 Pages OIDC，无需个人 PAT 或额外个人密钥。候选算法、数据、MIT 许可和完整 conformance 验收样例必须来自同一完整上游 SHA；全部校验通过后，机器人仅提交五个指纹产物，并显式调用 **Deploy static content to Pages** 部署精确提交。这样也能处理 `GITHUB_TOKEN` 提交不会再次触发 push 工作流的情况。
+
+网络、上游样例与数据不配套或其他校验失败时，同步流程不会提交或部署候选，当前站点保留原快照。到 Actions 查看失败步骤日志和运行摘要；其他正常 `main` 提交的部署仍照常执行。五个产物字节均无变化时不创建空提交，但仍会部署已验证的当前快照，以恢复前次部署失败；若校验期间 `main` 已前进，本轮跳过，等待下次定时运行或手动重跑。
+
+GitHub 定时任务可能延迟，不能保证准点；公开仓库连续 60 天无活动时，定时工作流会被停用，需重新启用。参见官方说明：[定时事件限制](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)、[GITHUB_TOKEN 的触发限制](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow#triggering-a-workflow-from-a-workflow)、[Pages 自定义工作流](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)。
+
+### 本地同步与回滚
+
+维护脚本使用 Node.js 24、Git 和 npx（打包器固定为 `esbuild@0.28.2`），暂存父目录 `/tmp/opencode` 需已存在。以下前两条命令校验通过后会更新本地五个产物；将 `FULL_UPSTREAM_SHA` 替换为 40 位完整上游 SHA。省略 `--latest` / `--ref` 时，默认重建当前 VERSION 中的上游版本。
 
 ```bash
-node scripts/sync-lmfpd.mjs --ref <upstream-commit>
+node scripts/sync-lmfpd.mjs --latest
+node scripts/sync-lmfpd.mjs --ref FULL_UPSTREAM_SHA
 node scripts/sync-lmfpd.mjs --verify-only
 ```
 
-同步脚本会重新打包核心算法、裁剪模型元数据，并跑上游 conformance 用例；校验失败不会覆盖现有数据。
+如需先检查隔离候选，使用下列命令。输出目录必须是新目录或空目录，结果文件必须尚不存在且位于输出目录之外；`changed` 比较全部五个产物的字节。
+
+```bash
+node scripts/sync-lmfpd.mjs --latest --artifact-root /tmp/opencode/lmfpd-candidate --result-file /tmp/opencode/lmfpd-result.json
+node scripts/sync-lmfpd.mjs --verify-only --artifact-root /tmp/opencode/lmfpd-candidate
+```
+
+`--verify-only` 只验证，不发布；默认获取清单 SHA 对应的上游验收样例。`--ref FULL_UPSTREAM_SHA --upstream LOCAL_CHECKOUT` 可从本地上游仓库读取该 SHA 的不可变 Git 对象，工作区改动不会混入；`--conformance FILE` 仅供受控离线样例验证，自动工作流不使用此覆盖项。不得修改 expected 或跳过配套校验来放行候选。
+
+需要回滚时，先在 Actions 暂停 **Sync LMFPD snapshot**，再通过普通 `git revert` 或正常恢复提交，将核心、检测器、模型元数据、VERSION 和 LICENSE 五个文件作为配套整体恢复到已验证版本。通过正常 `main` 推送，或手动运行 **Deploy static content to Pages** 重新部署；确认稳定后再启用同步。五个文件的精确路径与校验契约见 [自动同步规范](.trellis/spec/backend/lmfpd-auto-sync.md)。
 
 检测算法与参考数据来自 [Ikaleio/lm-detector](https://github.com/Ikaleio/lm-detector)（MIT），版权归原作者所有。
 
