@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI API 特殊调用测试</title>
   <link rel="icon" href="assets/favicon.svg?v=20260717" type="image/svg+xml" />
-  <link rel="stylesheet" href="assets/css/styles.css?v=20261026" />
+  <link rel="stylesheet" href="assets/css/styles.css?v=20261125" />
 </head>
 <body>
   <div class="container">
@@ -40,13 +40,23 @@
                 </svg>
               </button>
             </div>
-            <div id="proxyToggle" class="proxy-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="httpProxyRow">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-              <span>设置代理</span>
+            <div class="proxy-settings-head">
+              <button type="button" id="proxyToggle" class="proxy-toggle" aria-expanded="false" aria-controls="httpProxyRow">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+                <span>设置代理</span>
+              </button>
+              <span id="proxyStatus" class="proxy-status" role="status" aria-live="polite">HTTPS 直连</span>
             </div>
-            <div id="httpProxyRow" class="proxy-row collapsed">
-              <input type="text" id="httpProxyUrl" placeholder="HTTPS 代理地址，例如：https://your-proxy.workers.dev" />
-              <span class="proxy-label">代理</span>
+            <div id="httpProxyRow" class="proxy-row collapsed" hidden>
+              <label for="httpProxyUrl" class="proxy-address-label">代理地址</label>
+              <input type="url" id="httpProxyUrl" placeholder="例如：https://your-proxy.workers.dev" autocomplete="off" aria-describedby="proxyRoutingHint proxyTrustWarning" />
+              <label class="proxy-switch" for="httpsProxyToggle">
+                <input type="checkbox" id="httpsProxyToggle" aria-describedby="proxyRoutingHint proxyTrustWarning" />
+                <span class="toggle-slider" aria-hidden="true"></span>
+                <span>经代理转发 HTTPS</span>
+              </label>
+              <p id="proxyRoutingHint" class="proxy-hint">HTTPS 默认直连；HTTP 地址继续自动使用已配置的代理。</p>
+              <p id="proxyTrustWarning" class="proxy-trust-warning">API Key 会经过代理，请仅使用自己信任的代理。</p>
             </div>
             <div id="recentDropdown" class="recent-dropdown" role="listbox" style="display:none;"></div>
           </div>
@@ -88,19 +98,58 @@
             </div>
           </div>
         </div>
+        <div class="global-client-profile" id="globalProfileSettings" aria-labelledby="globalProfileTitle">
+          <div class="global-profile-heading">
+            <h3 id="globalProfileTitle">客户端画像</h3>
+            <span id="profileApplicabilityHint" class="fingerprint-section-hint">用于模型测试与指纹自动采样；模型列表、Images 和参考数据不应用画像。</span>
+          </div>
+          <div class="segmented capability-segmented" id="profileSelect" role="group" aria-label="客户端画像">
+            <button type="button" class="seg-btn active" data-profile="default" aria-pressed="true">默认</button>
+            <button type="button" class="seg-btn" data-profile="codex" aria-pressed="false">Codex CLI</button>
+            <button type="button" class="seg-btn" data-profile="claude" aria-pressed="false">Claude CLI</button>
+            <button type="button" class="seg-btn" data-profile="gemini" aria-pressed="false">Gemini CLI</button>
+          </div>
+          <p id="profileHint" class="fingerprint-section-hint">普通 API 调用，不模拟任何客户端。</p>
+          <p id="profileProtocolNotice" class="profile-protocol-notice" role="status" aria-live="polite" hidden></p>
+          <details id="profileAdvancedDetails" class="global-profile-advanced">
+            <summary>画像高级选项</summary>
+            <fieldset id="profileOptions" class="capability-profile-options" disabled>
+              <legend>画像选项</legend>
+              <div class="capability-profile-level-row">
+                <div class="capability-profile-level" role="group" aria-label="画像档位">
+                  <input type="radio" name="profileLevel" id="profileBasic" value="basic" checked aria-describedby="profileLevelHint" />
+                  <label for="profileBasic">基础</label>
+                  <input type="radio" name="profileLevel" id="profileEnhanced" value="enhanced" aria-describedby="profileLevelHint" />
+                  <label for="profileEnhanced">增强</label>
+                </div>
+                <span id="profileLevelHint" class="fingerprint-section-hint">默认画像跳过下方选项。</span>
+              </div>
+              <details id="profileCustomHeadersDetails" class="capability-custom-headers">
+                <summary>自定义请求头 <span>可选</span></summary>
+                <div class="capability-custom-headers-body">
+                  <label for="profileCustomHeaders">请求头 JSON</label>
+                  <p id="profileCustomHeadersHint" class="fingerprint-section-hint">填写字符串键值对象，如 {"x-client-name":"my-client"}。同名头会覆盖画像值；仅在本页使用，不保存到配置或最近连接。</p>
+                  <textarea id="profileCustomHeaders" rows="3" placeholder='{"x-client-name":"my-client"}' autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="profileCustomHeadersHint profileCustomHeadersError" aria-invalid="false"></textarea>
+                  <p id="profileCustomHeadersError" class="capability-field-error" role="alert" hidden></p>
+                </div>
+              </details>
+            </fieldset>
+          </details>
+          <p id="profileTransportHint" class="capability-transport-hint" role="status" aria-live="polite">默认画像不附加客户端身份头，也不使用增强档或自定义头。</p>
+        </div>
       </section>
 
       <section class="test-section">
         <div class="test-controls">
           <h2>测试内容</h2>
-          <p class="muted">在下方选择测试类型，编辑用户消息，然后发送请求。结果将按轮次与请求分块展示。</p>
+          <p class="muted">先选择协议，再选择测试项。每项使用上方配置，参数和结果显示在下方。</p>
 
           <div class="stream-toggle-row">
             <label class="stream-toggle-label">
               <input type="checkbox" id="streamToggle" checked />
               <span>流式响应</span>
             </label>
-            <span class="stream-toggle-hint">关闭后工具调用场景使用非流式 JSON 响应</span>
+            <span class="stream-toggle-hint" id="streamModeHint">关闭后使用非流式 JSON 响应</span>
           </div>
 
           <div class="segmented" id="vendorType">
@@ -108,7 +157,6 @@
             <button class="seg-btn" data-vendor="anthropic">Anthropic</button>
             <button class="seg-btn" data-vendor="google">Google</button>
             <button class="seg-btn" data-vendor="images">Images</button>
-            <button class="seg-btn" data-vendor="fingerprint">模型指纹</button>
           </div>
           <div class="segmented" id="openaiProtocol" style="display:none;">
             <button class="seg-btn active" data-protocol="chat_completions">Chat Completions</button>
@@ -145,7 +193,8 @@
           </div>
 
           <div class="btn-row">
-            <button class="btn btn-primary" id="testBtn">发送测试请求</button>
+            <button class="btn btn-primary" id="testBtn">运行测试</button>
+            <button type="button" class="btn fingerprint-btn-danger" id="stopTestBtn" disabled>停止</button>
             <button class="btn" id="clearBtn">清空结果</button>
             <div id="waitingContainer" class="waiting-container"></div>
           </div>
@@ -164,21 +213,12 @@
                     <button type="button" class="seg-btn" data-mode="manual" aria-pressed="false">手动粘贴</button>
                   </div>
                 </div>
-                <div class="fingerprint-field">
-                  <span class="fingerprint-field-label">请求格式</span>
-                  <div class="segmented fingerprint-segmented" id="fingerprintFormat" role="group" aria-label="请求格式">
-                    <button type="button" class="seg-btn active" data-format="chat_completions" aria-pressed="true">Chat Completions</button>
-                    <button type="button" class="seg-btn" data-format="responses" aria-pressed="false">Responses</button>
-                    <button type="button" class="seg-btn" data-format="anthropic" aria-pressed="false">Anthropic</button>
-                  </div>
-                </div>
               </div>
             </div>
 
+            <p id="fingerprintProtocolHint" class="diagnostic-context-hint"></p>
             <div class="fingerprint-actions">
               <div class="fingerprint-action-buttons">
-                <button type="button" class="btn btn-primary" id="fingerprintStartBtn">开始检测</button>
-                <button type="button" class="btn fingerprint-btn-danger" id="fingerprintStopBtn" disabled>停止</button>
                 <button type="button" class="btn btn-secondary" id="fingerprintRegenerateBtn">重新生成题目</button>
               </div>
               <div class="fingerprint-toggles">
@@ -186,11 +226,6 @@
                   <input type="checkbox" id="fingerprintParallelToggle" checked />
                   <span class="toggle-slider" aria-hidden="true"></span>
                   <span class="fingerprint-switch-text">并行请求</span>
-                </label>
-                <label class="fingerprint-switch">
-                  <input type="checkbox" id="fingerprintStreamToggle" checked />
-                  <span class="toggle-slider" aria-hidden="true"></span>
-                  <span class="fingerprint-switch-text">流式响应</span>
                 </label>
               </div>
               <div id="fingerprintStatus" class="fingerprint-status" role="status" aria-live="polite">尚未开始</div>
@@ -215,7 +250,6 @@
               </div>
               <div id="fingerprintSamples" class="fingerprint-samples"></div>
               <p id="fingerprintManualHint" class="fingerprint-manual-hint" hidden>把三条回答分别粘贴到上面的样本卡，然后点击“评分”。</p>
-              <button type="button" class="btn btn-primary fingerprint-score-btn" id="fingerprintScoreBtn" hidden>评分</button>
             </div>
 
             <div class="fingerprint-section">
@@ -231,6 +265,85 @@
             <div id="fingerprintAttribution" class="fingerprint-attribution">
               检测算法与参考数据来自 <a href="https://github.com/Ikaleio/lm-detector" target="_blank" rel="noopener noreferrer">LM Fingerpoint Detector</a>（MIT）
             </div>
+          </section>
+
+          <section id="capabilityPanel" class="fingerprint-panel capability-panel" hidden aria-labelledby="capabilityTitle">
+            <div class="fingerprint-header">
+              <div class="fingerprint-heading">
+                <h3 id="capabilityTitle">结构化输出</h3>
+                <p class="fingerprint-intro" id="capabilityIntro">使用固定 schema 检查返回结构。点击上方“运行测试”开始。</p>
+              </div>
+            </div>
+            <p id="capabilityProtocolHint" class="diagnostic-context-hint"></p>
+            <div class="fingerprint-section" id="structuredParams">
+              <h4>固定校验结构</h4>
+              <p class="fingerprint-section-hint">要求 city 为字符串、population 为整数、coastal 为布尔值，且不允许额外字段。</p>
+              <pre class="schema-summary" id="structuredSchemaSummary">{"city":"Lisbon","population":545000,"coastal":true}</pre>
+            </div>
+            <div class="fingerprint-section" id="needleParams" hidden>
+              <div class="fingerprint-section-head">
+                <h4>检索参数</h4>
+              </div>
+              <div class="capability-params">
+                <label class="capability-param">
+                  <span>大海捞针目标 tokens</span>
+                  <input type="number" id="needleTokens" value="8192" min="1024" step="1024" />
+                </label>
+                <label class="capability-param">
+                  <span>针深度 (%)</span>
+                  <input type="number" id="needleDepth" value="50" min="0" max="100" step="10" />
+                </label>
+              </div>
+            </div>
+            <div class="fingerprint-section" id="capacityParams" hidden>
+              <div class="fingerprint-section-head"><h4>搜索参数</h4></div>
+              <div class="capability-params">
+                <label class="capability-param">
+                  <span>容量搜索起点 tokens</span>
+                  <input type="number" id="capacityStart" value="131072" min="1024" step="1024" />
+                </label>
+                <label class="capability-param">
+                  <span>容量分辨率 tokens</span>
+                  <input type="number" id="capacityResolution" value="4096" min="256" step="256" />
+                </label>
+              </div>
+              <p class="fingerprint-section-hint" id="capacityBudgetHint"></p>
+            </div>
+            <div class="diagnostic-status-row">
+              <div id="capabilityStatus" class="fingerprint-status" role="status" aria-live="polite">尚未开始</div>
+              <div id="capabilityProgress" class="capability-progress" hidden>
+                <div class="capability-progress-bar"><span id="capabilityProgressFill"></span></div>
+                <span id="capabilityProgressText" class="capability-progress-text"></span>
+              </div>
+            </div>
+
+            <div id="capabilityError" class="fingerprint-error" role="alert" hidden></div>
+
+            <div class="fingerprint-section">
+              <div class="fingerprint-section-head">
+                <h4>结果</h4>
+                <span class="fingerprint-section-hint">失败项会给出所属错误类别与建议</span>
+              </div>
+              <div id="capabilityResults" class="capability-results">
+                <p class="fingerprint-empty">点击上方“运行测试”开始。</p>
+              </div>
+            </div>
+
+            <div class="fingerprint-section" id="capacitySection" hidden>
+              <div class="fingerprint-section-head">
+                <h4>容量搜索过程</h4>
+              </div>
+              <div class="fingerprint-diagnostics">
+                <table class="fingerprint-diagnostics-table">
+                  <thead>
+                    <tr><th>#</th><th>本地目标估算 tokens</th><th>结果</th><th>说明</th></tr>
+                  </thead>
+                  <tbody id="capacityAttempts"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="fingerprint-caveat">输入规模与容量上下界使用本地估算（中文约 1 字 1 token，其它约 4 字符 1 token）。服务端报告的输入用量在搜索过程中单独标注，可能采用不同口径。容量测试会产生多次真实请求，请确认额度充足。</div>
           </section>
         </div>
 
@@ -318,7 +431,9 @@
   </div>
 
   <script src="assets/js/config.js?v=20260625"></script>
-  <script src="assets/js/script.js?v=20260827"></script>
+  <script src="assets/js/testing-core.js?v=20261125"></script>
+  <script src="assets/js/script.js?v=20261125"></script>
   <script src="assets/js/fingerprint.js?v=20261026"></script>
+  <script src="assets/js/capability.js?v=20261125"></script>
 </body>
 </html>

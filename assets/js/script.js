@@ -8,6 +8,7 @@
   const apiKeyEl = $('#apiKey');
   const modelEl = $('#model');
   const testBtn = $('#testBtn');
+  const stopTestBtn = $('#stopTestBtn');
   const clearBtn = $('#clearBtn');
   const blocksContainer = $('#blocksContainer');
   const messageTimeline = $('#messageTimeline');
@@ -52,6 +53,14 @@
   const httpProxyRowEl = $('#httpProxyRow');
   const httpWarningIconEl = $('#httpWarningIcon');
   const proxyToggleEl = $('#proxyToggle');
+  const httpsProxyToggleEl = $('#httpsProxyToggle');
+  const proxyStatusEl = $('#proxyStatus');
+  const proxyRoutingHintEl = $('#proxyRoutingHint');
+  const profileWrap = $('#profileSelect');
+  const profileOptionsEl = $('#profileOptions');
+  const profileEnhancedEl = $('#profileEnhanced');
+  const customHeadersEl = $('#profileCustomHeaders');
+  const customHeadersErrorEl = $('#profileCustomHeadersError');
   const thinkingToggleEl = $('#thinkingToggle');
   const effortSelectBtn = $('#effortSelectBtn');
   const effortDropdown = $('#effortDropdown');
@@ -67,15 +76,40 @@
   let requestPending = false;
   let waitingEl = null;
   let currentAbortController = null;
+  let ordinaryRunContext = null;
+  let runEpoch = 0;
+  let pendingRequestBlocks = [];
+  const boundRunContexts = new WeakMap();
+  const scenarioControllers = new Map();
+  let activeControllerId = null;
+  let scenarioRunState = { running: false, label: '运行测试' };
+  let scenarioStateRevision = 0;
+  let selectedProfile = 'default';
+  let lastProxyRouteKey = null;
+
+  function throwIfRequestAborted(signal, epoch = runEpoch) {
+    if ((signal && signal.aborted) || epoch !== runEpoch) {
+      // Abort reasons may be strings or ordinary Errors; callers rely on this name.
+      throw new DOMException('Request aborted', 'AbortError');
+    }
+  }
 
   // Abort current request helper
   function abortCurrentRequest() {
+    runEpoch++;
     if (currentAbortController) {
       currentAbortController.abort();
       currentAbortController = null;
     }
+    if (activeControllerId) {
+      const controller = scenarioControllers.get(activeControllerId);
+      if (controller && controller.stop) controller.stop();
+    }
+    ordinaryRunContext = null;
     requestPending = false;
+    scenarioRunState = { running: false, label: defaultRunLabel() };
     hideWaiting();
+    updateSharedRunButtons();
     updateClearBtnState();
   }
 
@@ -100,20 +134,88 @@
     updateRecentConnectionsButtonState();
   }
 
-  // HTTP Proxy helpers
+  // Shared routing for every API endpoint. HTTP keeps its legacy auto-proxy rule.
+  const PROFILE_OVERRIDE_HEADER = 'X-APITest-Override-Headers';
+  const sensitiveProfileValues = new Set();
   function getProxyUrl() {
     return (localStorage.getItem('httpProxyUrl') || '').trim();
   }
   function saveProxyUrl(url) {
     localStorage.setItem('httpProxyUrl', url || '');
   }
+  function isHttpsProxyEnabled() {
+    return localStorage.getItem('httpsProxyEnabled') === '1';
+  }
+  function saveHttpsProxyEnabled(enabled) {
+    localStorage.setItem('httpsProxyEnabled', enabled ? '1' : '0');
+  }
+  function isConfiguredProxyRoute(url, ctx) {
+    const proxyUrl = ctx ? ctx.proxyUrl : getProxyUrl();
+    if (!proxyUrl || typeof url !== 'string') return false;
+    const prefix = stripTrailingSlash(proxyUrl) + '/proxy/';
+    return url.startsWith(prefix) && /^https?:\/\//i.test(url.slice(prefix.length));
+  }
   function applyProxy(baseUrl) {
     const proxyUrl = getProxyUrl();
     if (!proxyUrl) return baseUrl;
-    if (!baseUrl || !baseUrl.toLowerCase().startsWith('http://')) return baseUrl;
-    // Rewrite: http://target:port/path -> https://proxy/proxy/http://target:port/path
+    if (!baseUrl || isConfiguredProxyRoute(baseUrl)) return baseUrl;
+    const isHttp = baseUrl.toLowerCase().startsWith('http://');
+    const isHttps = baseUrl.toLowerCase().startsWith('https://');
+    if (!isHttp && !(isHttps && isHttpsProxyEnabled())) return baseUrl;
     const normalizedProxy = stripTrailingSlash(proxyUrl);
     return `${normalizedProxy}/proxy/${baseUrl}`;
+  }
+
+  function rememberSensitiveProfileHeaders(headers) {
+    const entries = headers instanceof Headers || Array.isArray(headers)
+      ? Array.from(headers) : Object.entries(headers || {});
+    entries.forEach(([name, value]) => {
+      if (!isSensitiveHeaderName(name) || value == null) return;
+      const text = String(value);
+      if (!text) return;
+      // HTTP removes only leading/trailing SP and HTAB. Keep both forms, plus
+      // the token alone: upstream errors need not echo the authentication scheme.
+      const normalized = text.replace(/^[ \t]+|[ \t]+$/g, '');
+      const values = [text, normalized, normalized.replace(/^Bearer[ \t]+/i, '')];
+      values.forEach(secret => {
+        if (!secret) return;
+        sensitiveProfileValues.add(secret);
+        sensitiveProfileValues.add(JSON.stringify(secret).slice(1, -1));
+        try { sensitiveProfileValues.add(encodeURIComponent(secret)); }
+        catch { /* Invalid Unicode cannot form a URI; retain raw/JSON masking. */ }
+      });
+    });
+  }
+
+  // Consume the exact map generated by TestingCore once for this request.
+  // The URL is already routed by the endpoint builder and may include core query edits.
+  function prepareProfileTransport({ url, headers, profileHeaders, applied, runContext }) {
+    const entries = headers instanceof Headers ? Array.from(headers.entries())
+      : (Array.isArray(headers) ? headers : Object.entries(headers || {}));
+    const outgoing = Object.fromEntries(entries.filter(([name]) =>
+      String(name).toLowerCase() !== PROFILE_OVERRIDE_HEADER.toLowerCase()));
+    rememberSensitiveProfileHeaders(outgoing);
+    rememberSensitiveProfileHeaders(profileHeaders);
+    try {
+      // Gemini puts its API key in the query. Retain only an in-memory masking
+      // value so a later configuration edit cannot expose the old key in errors.
+      const query = new URL(url).searchParams;
+      query.forEach((value, name) => {
+        if (isSensitiveHeaderName(name)) rememberSensitiveProfileHeaders({ [name]: value });
+      });
+    } catch { /* fetch will report malformed request URLs with the usual context */ }
+    const proxyRouted = isConfiguredProxyRoute(url, runContext);
+    const identityApplied = applied === true || !!(applied && applied.applied === true && !applied.mismatch);
+    const overrideRequested = identityApplied && (runContext ? runContext.httpsProxyEnabled : isHttpsProxyEnabled()) && proxyRouted &&
+      !!profileHeaders && Object.keys(profileHeaders).length > 0;
+    if (overrideRequested) {
+      outgoing[PROFILE_OVERRIDE_HEADER] = JSON.stringify(profileHeaders)
+        .replace(/[\u007f-\uffff]/g, char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0'));
+      Object.keys(outgoing).forEach(name => {
+        if (name.toLowerCase() === 'user-agent') delete outgoing[name];
+      });
+    }
+    return { url, headers: outgoing, proxyRouted, overrideRequested };
   }
 
   function updateRecentConnectionsButtonState() {
@@ -340,13 +442,13 @@
   function addInlineError(text, raw) {
     const el = document.createElement('div');
     el.className = 'error-inline';
-    el.textContent = String(text || '发生未知错误');
+    el.textContent = sanitizeSensitiveText(text || '发生未知错误');
     // 确保等待动画被移除后再追加错误块
     hideWaiting();
     messageTimeline.appendChild(el);
     // 附带原始内容（JSON/纯文本），不再渲染 HTML 预览
     try {
-      const rawText = raw && raw.rawText;
+      const rawText = raw && raw.rawText ? sanitizeSensitiveText(raw.rawText) : '';
       const ct = (raw && raw.contentType || '').toLowerCase();
       if (rawText) {
         const wrap = document.createElement('div');
@@ -536,12 +638,14 @@
     copy.className = 'copy-btn';
     copy.textContent = '复制';
     const pre = document.createElement('pre');
-    const payloadText = formatPayloadForBlock(payload);
+    const payloadText = options && options.headers
+      ? sanitizeSensitiveText(formatPayloadForBlock(payload)) : formatPayloadForBlock(payload);
     pre.textContent = payloadText;
     wrap.appendChild(toggleBtn); wrap.appendChild(h); wrap.appendChild(copy);
     if (options && options.headers) {
       const displayHeaders = normalizeHeadersForDisplay(options.headers);
-      const headersText = JSON.stringify(displayHeaders, null, 2);
+      let headersText = JSON.stringify(displayHeaders, null, 2);
+      let bodyText = payloadText;
       const headersLabel = document.createElement('div');
       headersLabel.className = 'code-section-label';
       const labelText = document.createElement('span');
@@ -558,7 +662,13 @@
       bodyLabel.className = 'code-section-label';
       bodyLabel.textContent = '请求体';
       wrap.appendChild(headersLabel); wrap.appendChild(headersPre); wrap.appendChild(bodyLabel); wrap.appendChild(pre);
-      attachCopy(copy, () => `请求头\n${headersText}\n\n请求体\n${payloadText || ''}`);
+      attachCopy(copy, () => `请求头\n${headersText}\n\n请求体\n${bodyText || ''}`);
+      wrap.updateRequest = (body, headers) => {
+        headersText = JSON.stringify(normalizeHeadersForDisplay(headers), null, 2);
+        bodyText = sanitizeSensitiveText(formatPayloadForBlock(body));
+        headersPre.textContent = headersText;
+        pre.textContent = bodyText;
+      };
     } else {
       wrap.appendChild(pre);
       attachCopy(copy, pre);
@@ -588,7 +698,9 @@
   }
 
   function addRequestBlock(title, payload, headers) {
-    return addBlock(title, payload, undefined, { headers });
+    const block = addBlock(title, payload, undefined, { headers });
+    pendingRequestBlocks.push({ block, body: typeof payload === 'string' ? payload : JSON.stringify(payload) });
+    return block;
   }
 
   // 格式化耗时
@@ -755,6 +867,7 @@
     stopWaitingTimer();
     blocksContainer.innerHTML = '';
     messageTimeline.innerHTML = '';
+    pendingRequestBlocks = [];
     errorMessage.textContent = '';
     lastRenderedHtml = null;
     if (htmlPreviewSection) htmlPreviewSection.style.display = 'none';
@@ -773,7 +886,7 @@
     const isWaiting = waitingEl && waitingEl.parentNode === waitingContainer;
 
     // 如果只有等待动画，视为无内容
-    const hasActualContent = hasBlocks || hasTimeline;
+    const hasActualContent = hasBlocks || hasTimeline || !!activeControllerId;
 
     clearBtn.disabled = !hasActualContent && !requestPending;
   }
@@ -931,7 +1044,13 @@
     clearEditForm();
   });
 
-  clearBtn.addEventListener('click', clearResults);
+  clearBtn.addEventListener('click', () => {
+    abortCurrentRequest();
+    const controller = scenarioControllers.get(activeControllerId);
+    if (controller && controller.clear) controller.clear();
+    clearResults();
+  });
+  stopTestBtn.addEventListener('click', abortCurrentRequest);
 
   if (htmlPreviewToggle && htmlPreviewContainer) {
     htmlPreviewToggle.addEventListener('click', () => {
@@ -1022,6 +1141,7 @@
     updateHttpProxyUI();
     // 初始化思考等级 UI（需在模型值加载完成后调用）
     updateThinkingUI();
+    updateGlobalProfileUI();
   });
 
   // 文生图默认提示词（场景按钮填充 + 空输入回退共用）
@@ -1072,6 +1192,12 @@
     label: test.label,
     defaultInput: test.prompt
   }));
+  const DIAGNOSTIC_TESTS = [
+    { scenario: 'structured', label: '结构化输出' },
+    { scenario: 'needle', label: '大海捞针' },
+    { scenario: 'capacity', label: '上下文容量' },
+    { scenario: 'fingerprint', label: '模型指纹' }
+  ];
 
   // OpenAI 测试按钮：根据当前协议动态生成，不标注协议名（由切换开关决定）
   function getOpenaiTests() {
@@ -1098,7 +1224,7 @@
     <juice_level></juice_level>
 </request>`
     });
-    tests.push(...IQ_TEST_BUTTONS);
+    tests.push(...IQ_TEST_BUTTONS, ...DIAGNOSTIC_TESTS);
     return tests;
   }
 
@@ -1108,14 +1234,14 @@
     anthropic: [
       { scenario: 'anthropic_tools', label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
       { scenario: 'anthropic_image', label: '图片识别', defaultInput: '请描述这张图片' },
-      ...IQ_TEST_BUTTONS
+      ...IQ_TEST_BUTTONS, ...DIAGNOSTIC_TESTS
     ],
     google: [
       { scenario: 'gemini_tools', label: '工具调用', defaultInput: 'RANDOM_CONVERT_TASK' },
       { scenario: 'gemini_search', label: '搜索', defaultInput: '搜索当前最新的Gemini旗舰模型是？' },
       { scenario: 'gemini_url_context', label: 'URL 上下文', defaultInput: '这个工具有哪些特点？https://ai.google.dev/gemini-api/docs/url-context' },
       { scenario: 'gemini_image', label: '图片识别', defaultInput: '请描述这张图片' },
-      ...IQ_TEST_BUTTONS
+      ...IQ_TEST_BUTTONS, ...DIAGNOSTIC_TESTS
     ],
     images: [
       { scenario: 'images_generate', label: '文生图', defaultInput: DEFAULT_IMAGES_GENERATE_PROMPT },
@@ -1145,13 +1271,138 @@
   // OpenAI 协议切换状态：'chat_completions' 或 'responses'
   let openaiProtocol = 'chat_completions';
 
+  /** 当前生效的协议，供面板继承。取值与面板原有词表一致。 */
+  function getActiveProtocol() {
+    return currentVendor === 'openai' ? openaiProtocol : currentVendor;
+  }
+
+  /**
+   * 切换协议并同步顶部 UI。面板也会调用它（例如选 Claude CLI 画像时要求
+   * 切到 Anthropic），所以必须同时处理 OpenAI 的 chat/responses 子协议。
+   */
+  function applyProtocol(protocol) {
+    setActiveVendor(protocol === 'anthropic' || protocol === 'google' ? protocol : 'openai', {
+      protocol: protocol === 'responses' ? 'responses' : 'chat_completions'
+    });
+  }
+
   // 当前活跃的测试场景
   let currentActiveScenario = null;
 
   // 是否启用流式响应
   function isStreamEnabled() {
-    return !streamToggleEl || streamToggleEl.checked;
+    return ordinaryRunContext ? ordinaryRunContext.stream : (!streamToggleEl || streamToggleEl.checked);
   }
+
+  const PROFILE_PROTOCOL = { codex: 'responses', claude: 'anthropic', gemini: 'google' };
+
+  function updateGlobalProfileUI() {
+    const meta = window.TestingCore && window.TestingCore.REQUEST_PROFILE_META[selectedProfile];
+    const ignored = currentVendor === 'images';
+    $('#profileHint').textContent = ignored ? 'Images 不应用客户端画像，返回模型协议后继续使用所选画像。'
+      : (meta ? meta.hint : '普通 API 调用，不模拟任何客户端。');
+    profileOptionsEl.disabled = selectedProfile === 'default';
+    $('#profileLevelHint').textContent = selectedProfile === 'default' ? '默认画像跳过下方选项。'
+      : (selectedProfile === 'gemini' ? 'Gemini 两档均附加相同的 CLI 身份信息。'
+        : (profileEnhancedEl.checked ? '增强档增加客户端元数据；自定义头优先。' : '基础档使用常用客户端身份头。'));
+    $('#profileTransportHint').textContent = selectedProfile === 'default'
+      ? '默认画像不附加客户端身份头，也不使用增强档或自定义头。'
+      : (isHttpsProxyEnabled() && getProxyUrl()
+        ? '兼容模型请求将请求代理转发画像头。成功响应不代表上游已收到该 UA。'
+        : '未启用画像头代理转发；浏览器可能忽略 User-Agent。请在代理设置中配置并主动开启 HTTPS 转发。');
+    $$('#profileSelect [data-profile]').forEach(button => {
+      const active = button.dataset.profile === selectedProfile;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+  }
+
+  function setGlobalProfile(profile) {
+    if (!window.TestingCore || !Object.hasOwn(window.TestingCore.REQUEST_PROFILE_META, profile)) return;
+    if (selectedProfile !== profile) {
+      $('#profileBasic').checked = true;
+      customHeadersEl.value = '';
+      customHeadersErrorEl.hidden = true;
+      customHeadersErrorEl.textContent = '';
+      customHeadersEl.setAttribute('aria-invalid', 'false');
+    }
+    selectedProfile = profile;
+    $('#profileProtocolNotice').hidden = true;
+    if (PROFILE_PROTOCOL[profile]) applyProtocol(PROFILE_PROTOCOL[profile]);
+    updateGlobalProfileUI();
+  }
+
+  function ensureProfileCompatibility() {
+    if (currentVendor !== 'images' && selectedProfile !== 'default' &&
+      PROFILE_PROTOCOL[selectedProfile] !== getActiveProtocol()) {
+      setGlobalProfile('default');
+      $('#profileProtocolNotice').textContent = '协议已更改，与原画像不兼容；本次及后续请求已恢复默认画像。';
+      $('#profileProtocolNotice').hidden = false;
+    }
+    updateGlobalProfileUI();
+  }
+
+  function readGlobalProfile() {
+    if (selectedProfile === 'default' || currentVendor === 'images') return { id: 'default', enhanced: false, custom: {} };
+    let custom;
+    try {
+      custom = customHeadersEl.value.trim() ? JSON.parse(customHeadersEl.value) : {};
+      if (!custom || Array.isArray(custom) || typeof custom !== 'object') throw new Error();
+      // Core validation has no network side effects and returns safe static errors.
+      Object.entries(custom).forEach(([name, value]) => {
+        if (typeof value !== 'string') throw new Error();
+      });
+      // Validate without generating any per-request identity.
+      const reserved = /^(?:x-apitest-.*|sec-.*|proxy-.*|access-control-.*|host|content-length|origin|referer|cookie2?|accept-charset|accept-encoding|date|dnt|expect|permissions-policy|connection|keep-alive|transfer-encoding|te|trailer|upgrade)$/i;
+      Object.entries(custom).forEach(([name, value]) => {
+        if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || reserved.test(name) ||
+          /[\u0000-\u0008\u000a-\u001f\u007f\u0100-\uffff]/.test(value)) throw new Error();
+      });
+    } catch {
+      const message = '自定义请求头无效：请填写合法的字符串 JSON 对象，不得包含保留头、换行或无效字符。';
+      customHeadersErrorEl.textContent = message;
+      customHeadersErrorEl.hidden = false;
+      customHeadersEl.setAttribute('aria-invalid', 'true');
+      $('#profileAdvancedDetails').open = true;
+      $('#profileCustomHeadersDetails').open = true;
+      throw new Error(message);
+    }
+    customHeadersErrorEl.hidden = true;
+    customHeadersErrorEl.textContent = '';
+    customHeadersEl.setAttribute('aria-invalid', 'false');
+    return { id: selectedProfile, enhanced: profileEnhancedEl.checked, custom: Object.fromEntries(Object.entries(custom)) };
+  }
+
+  function captureRunContext() {
+    const ctx = getRequestContext();
+    const manualFingerprint = ctx.scenario === 'fingerprint' &&
+      !!$('#fingerprintMode [data-mode="manual"].active');
+    ctx.profile = manualFingerprint ? { id: 'default', enhanced: false, custom: {} } : readGlobalProfile();
+    return ctx;
+  }
+
+  function isThinkingEnabled() {
+    return ordinaryRunContext ? ordinaryRunContext.thinking : thinkingToggleEl.checked;
+  }
+
+  function getThinkingEffort() {
+    return ordinaryRunContext ? ordinaryRunContext.effort : effortSelectedValue;
+  }
+
+  function bindRunContext(signal, ctx) {
+    if (signal) boundRunContexts.set(signal, ctx);
+    return signal;
+  }
+
+  profileWrap.addEventListener('click', event => {
+    const button = event.target.closest('[data-profile]');
+    if (button) setGlobalProfile(button.dataset.profile);
+  });
+  $('#profileBasic').addEventListener('change', updateGlobalProfileUI);
+  profileEnhancedEl.addEventListener('change', updateGlobalProfileUI);
+  customHeadersEl.addEventListener('input', () => {
+    try { readGlobalProfile(); } catch { /* inline feedback is already visible */ }
+  });
 
   // Thinking/Reasoning effort helpers — per-model catalog approach (ai-toolbox pattern)
   // Each entry: { pattern: RegExp, levels: [string], default: string, param: string, noToggle?: bool }
@@ -1266,14 +1517,14 @@
         qwenBudgetMap = { low: 1024, medium: 4096, high: 16384, max: 32768 };
         return { enable_thinking: true, thinking_budget: qwenBudgetMap[level] || 4096 };
       case 'glm52_thinking':
-        if (isAliyunGlmEndpoint(apiUrlEl.value)) {
+        if (isAliyunGlmEndpoint(ordinaryRunContext ? ordinaryRunContext.apiUrl : apiUrlEl.value)) {
           if (level === 'disabled') return { enable_thinking: false };
           return { enable_thinking: true, reasoning_effort: level };
         }
         if (level === 'disabled') return { thinking: { type: 'disabled' } };
         return { thinking: { type: 'enabled' }, reasoning_effort: level };
       case 'glm_thinking':
-        if (isAliyunGlmEndpoint(apiUrlEl.value)) {
+        if (isAliyunGlmEndpoint(ordinaryRunContext ? ordinaryRunContext.apiUrl : apiUrlEl.value)) {
           return { enable_thinking: level !== 'disabled' };
         }
         return { thinking: { type: level === 'disabled' ? 'disabled' : 'enabled' } };
@@ -1402,6 +1653,7 @@
 
   /** data URL 或远程 URL → Blob（图生图 multipart 用） */
   async function imageDataToBlob(imageData, signal) {
+    throwIfRequestAborted(signal);
     if (!imageData) throw new Error('未提供图片数据');
     if (String(imageData).startsWith('data:')) {
       const matches = String(imageData).match(/^data:([^;]+);base64,(.+)$/);
@@ -1414,14 +1666,18 @@
     }
     try {
       const res = await fetch(imageData, { signal });
+      throwIfRequestAborted(signal);
       if (!res.ok) {
         var statusLabel = res.statusText
           ? ('HTTP ' + res.status + ' ' + res.statusText)
           : ('HTTP ' + res.status);
         throw new Error(statusLabel);
       }
-      return await res.blob();
+      const blob = await res.blob();
+      throwIfRequestAborted(signal);
+      return blob;
     } catch (err) {
+      throwIfRequestAborted(signal);
       if (err && err.name === 'AbortError') throw err;
       // 保留已带 HTTP 状态的错误信息；其余按跨域/读取失败处理
       if (err && typeof err.message === 'string' && /^HTTP\s+\d+/.test(err.message)) throw err;
@@ -1547,6 +1803,8 @@
   }
 
   async function sendStandardTextRequestForVendor({ vendor, apiKey, model, userText, endpoint, anthropicEndpoint, geminiStreamEndpoint, geminiEndpoint, signal, responsesEndpoint }) {
+    const epoch = runEpoch;
+    throwIfRequestAborted(signal, epoch);
     let requestBody, requestHeaders, url;
     let userMessagePayload;
 
@@ -1557,8 +1815,8 @@
         messages: [{ role: 'user', content: userText }],
         stream: isStreamEnabled()
       };
-      if (thinkingToggleEl.checked && effortSelectedValue) {
-        var tParams = buildThinkingParams(model, effortSelectedValue);
+      if (isThinkingEnabled() && getThinkingEffort()) {
+        var tParams = buildThinkingParams(model, getThinkingEffort());
         Object.assign(requestBody, tParams);
         ensureAnthropicMaxTokens(requestBody);
       }
@@ -1570,8 +1828,8 @@
         contents: [{ role: 'user', parts: [{ text: userText }] }],
         stream: isStreamEnabled()
       };
-      if (thinkingToggleEl.checked && effortSelectedValue) {
-        var gParams = buildThinkingParams(model, effortSelectedValue);
+      if (isThinkingEnabled() && getThinkingEffort()) {
+        var gParams = buildThinkingParams(model, getThinkingEffort());
         if (!requestBody.generationConfig) requestBody.generationConfig = {};
         Object.assign(requestBody.generationConfig, gParams);
       }
@@ -1585,8 +1843,8 @@
         input: [{ role: 'user', content: userText }],
         stream: isStreamEnabled()
       };
-      if (thinkingToggleEl.checked && effortSelectedValue) {
-        var rParams = buildResponsesThinkingParams(model, effortSelectedValue);
+      if (isThinkingEnabled() && getThinkingEffort()) {
+        var rParams = buildResponsesThinkingParams(model, getThinkingEffort());
         Object.assign(requestBody, rParams);
       }
       requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
@@ -1598,8 +1856,8 @@
         messages: [{ role: 'user', content: userText }],
         stream: isStreamEnabled()
       };
-      if (thinkingToggleEl.checked && effortSelectedValue) {
-        var cParams = buildThinkingParams(model, effortSelectedValue);
+      if (isThinkingEnabled() && getThinkingEffort()) {
+        var cParams = buildThinkingParams(model, getThinkingEffort());
         Object.assign(requestBody, cParams);
       }
       requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
@@ -1647,6 +1905,7 @@
         signal
       }, updateAssistantMessage, createOnPhaseCallback(), updateReasoningMessage);
     } catch (err) {
+      throwIfRequestAborted(signal, epoch);
       if (err && err.name === 'AbortError') throw err;
       // Enhance error for IQ test timeout situations
       if (err && (err.name === 'FetchNetworkError' || err.name === 'TypeError') && isIqTestScenario(currentActiveScenario)) {
@@ -1660,6 +1919,7 @@
       throw err;
     }
 
+    throwIfRequestAborted(signal, epoch);
     const duration = Date.now() - start;
 
     // Build response block: show full JSON if non-streamed, otherwise show text summary
@@ -1820,7 +2080,37 @@
   }
 
   function sanitizeSensitiveText(text) {
-    return String(text || '')
+    rememberSensitiveProfileHeaders({ 'api-key': apiKeyEl.value });
+    let safeText = String(text || '');
+    const redact = (value, depth = 0) => {
+      if (depth > 12) return '***';
+      if (typeof value === 'string') {
+        if (/^[\s]*[\[{]/.test(value)) {
+          try { return JSON.stringify(redact(JSON.parse(value), depth + 1)); } catch { /* sanitize prose below */ }
+        }
+        return value.replace(/x-apitest-override-headers[\s\S]*/gi,
+          'X-APITest-Override-Headers: [已隐藏]');
+      }
+      if (Array.isArray(value)) return value.map(item => redact(item, depth + 1));
+      if (!value || typeof value !== 'object') return value;
+      return Object.fromEntries(Object.entries(value).map(([name, item]) => [name,
+        name.toLowerCase() === PROFILE_OVERRIDE_HEADER.toLowerCase() || isSensitiveHeaderName(name)
+          ? '***' : redact(item, depth + 1)]));
+    };
+    // An echoed composite header can contain credentials under several nested keys.
+    // Hide the entire internal payload, including malformed or escaped JSON echoes.
+    if (/x-apitest-override-headers|authorization|api[-_]?key|token|secret|password|cookie/i.test(safeText)) {
+      try {
+        safeText = JSON.stringify(redact(JSON.parse(safeText)), null, 2);
+      } catch {
+        safeText = safeText.replace(/x-apitest-override-headers[\s\S]*/gi,
+          'X-APITest-Override-Headers: [已隐藏]');
+      }
+    }
+    Array.from(sensitiveProfileValues).sort((a, b) => b.length - a.length).forEach(secret => {
+      safeText = safeText.split(secret).join('***');
+    });
+    return safeText
       .replace(/(sk-)[A-Za-z0-9_-]{8,}/g, '$1***')
       .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, '$1***')
       .replace(/(["']?(?:api[_-]?key|token|access_token|authorization|secret|password|cookie)["']?\s*[:=]\s*["']?)[^"',\s;&}\]]{4,}/gi, '$1***')
@@ -1841,6 +2131,7 @@
 
   function maskHeaderValue(name, value) {
     const text = Array.isArray(value) ? value.join(', ') : String(value == null ? '' : value);
+    if (String(name).toLowerCase() === PROFILE_OVERRIDE_HEADER.toLowerCase()) return '***';
     if (isSensitiveHeaderName(name)) {
       return /^\s*Bearer\s+/i.test(text) ? text.replace(/^(\s*Bearer\s+).+$/i, '$1***') : '***';
     }
@@ -1848,7 +2139,7 @@
   }
 
   function normalizeHeadersForDisplay(headers) {
-    const displayHeaders = {};
+    const displayHeaders = Object.create(null);
     if (!headers) return displayHeaders;
 
     if (typeof Headers !== 'undefined' && headers instanceof Headers) {
@@ -1939,6 +2230,27 @@
         '可能原因：后端不可用、URL/端口错误、跨域(CORS) 或代理问题。'
       ]
     };
+  }
+
+  /**
+   * One actionable line for a failed request, using the shared taxonomy.
+   * Returns '' when the core module is unavailable so callers can skip it.
+   */
+  function classifyErrorForDisplay(err) {
+    var core = (typeof window !== 'undefined') ? window.TestingCore : null;
+    if (!core || typeof core.classifyError !== 'function') return '';
+    try {
+      var info = core.classifyError({
+        name: err && err.name,
+        message: err && err.message,
+        status: err && err.status,
+        rawText: err && err.rawText
+      });
+      var prefix = info.status ? `错误类别：${info.label}（HTTP ${info.status}）` : `错误类别：${info.label}`;
+      return `${prefix}。${info.advice}`;
+    } catch (e) {
+      return '';
+    }
   }
 
   function getFetchMethod(options) {
@@ -2349,48 +2661,134 @@
   });
 
   // 渲染测试按钮
-  function renderTestButtons(vendor) {
-    if (vendor === 'fingerprint') {
-      testTypeWrap.innerHTML = '';
-      return;
-    }
+  function renderTestButtons(vendor, preferred = currentActiveScenario) {
     const tests = vendor === 'openai' ? getOpenaiTests() : (vendorTests[vendor] || []);
-    testTypeWrap.innerHTML = tests.map((t, i) =>
-      `<button class="seg-btn${i === 0 ? ' active' : ''}" data-scenario="${t.scenario}">${escapeHtml(t.label)}</button>`
+    const next = tests.find(test => test.scenario === preferred) || tests[0];
+    testTypeWrap.innerHTML = tests.map(t =>
+      `<button type="button" class="seg-btn${next && t.scenario === next.scenario ? ' active' : ''}" data-scenario="${t.scenario}" aria-pressed="${!!next && t.scenario === next.scenario}">${escapeHtml(t.label)}</button>`
     ).join('');
-    // 设置默认输入
-    if (tests.length > 0) {
-      applyScenarioInput(tests[0].scenario, tests[0].defaultInput);
-    }
+    if (next) activateScenario(next);
   }
 
   // 切换厂商
-  function setActiveVendor(vendor) {
+  function setActiveVendor(vendor, options = {}) {
+    if (!['openai', 'anthropic', 'google', 'images'].includes(vendor)) return;
+    const nextProtocol = vendor === 'openai' ? (options.protocol || openaiProtocol) : vendor;
+    if (currentVendor === vendor && getActiveProtocol() === nextProtocol) {
+      ensureProfileCompatibility();
+      return;
+    }
     abortCurrentRequest();
     currentVendor = vendor;
+    if (vendor === 'openai') openaiProtocol = nextProtocol;
     $$('#vendorType .seg-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.vendor === vendor));
-    // 协议切换开关：仅在 OpenAI 下显示，切换厂商时重置为 Chat Completions
-    openaiProtocol = 'chat_completions';
     if (openaiProtocolWrap) {
       openaiProtocolWrap.style.display = vendor === 'openai' ? '' : 'none';
-      $$('#openaiProtocol .seg-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.protocol === 'chat_completions'));
+      $$('#openaiProtocol .seg-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.protocol === openaiProtocol));
     }
+    ensureProfileCompatibility();
     renderTestButtons(vendor);
-    document.body.classList.toggle('fingerprint-mode', vendor === 'fingerprint');
     window.dispatchEvent(new CustomEvent('apitest:vendor-change', { detail: { vendor } }));
+    window.dispatchEvent(new CustomEvent('apitest:protocol-change', { detail: { protocol: getActiveProtocol() } }));
     clearResults();
+  }
+
+  function returnToTests() {
+    const tests = currentVendor === 'openai' ? getOpenaiTests() : vendorTests[currentVendor];
+    if (tests && tests[0]) setActiveScenario(tests[0].scenario);
+    const selectedTest = testTypeWrap.querySelector('.seg-btn.active');
+    if (selectedTest) selectedTest.focus();
+  }
+
+  function defaultRunLabel() {
+    if (currentActiveScenario === 'fingerprint') {
+      return $('#fingerprintMode [data-mode="manual"].active') ? '评分' : '开始检测';
+    }
+    return '运行测试';
+  }
+
+  function updateSharedRunButtons() {
+    const running = requestPending || scenarioRunState.running;
+    testBtn.disabled = !!running;
+    testBtn.textContent = running ? (scenarioRunState.label || '运行中…') : (scenarioRunState.label || defaultRunLabel());
+    stopTestBtn.disabled = !running || scenarioRunState.stopEnabled === false;
+    updateClearBtnState();
+  }
+
+  function registerScenarioController(id, controller) {
+    scenarioControllers.set(id, controller);
+    if (currentActiveScenario === id) {
+      activeControllerId = id;
+      controller.activate && controller.activate(getRequestContext());
+    }
+  }
+
+  function setScenarioRunState(id, next) {
+    if (currentActiveScenario !== id || activeControllerId !== id) return;
+    scenarioStateRevision++;
+    scenarioRunState = { ...next, label: next.label || (next.running ? '运行中…' : defaultRunLabel()) };
+    updateSharedRunButtons();
+  }
+
+  function activateScenario(test) {
+    const previous = scenarioControllers.get(activeControllerId);
+    if (previous && previous.deactivate) previous.deactivate();
+    currentActiveScenario = test.scenario;
+    activeControllerId = scenarioControllers.has(test.scenario) ? test.scenario : null;
+    scenarioRunState = { running: false, label: defaultRunLabel() };
+    $$('#testType [data-scenario]').forEach(button => {
+      const active = button.dataset.scenario === test.scenario;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    const diagnostic = DIAGNOSTIC_TESTS.some(item => item.scenario === test.scenario);
+    document.body.classList.toggle('fingerprint-mode', test.scenario === 'fingerprint');
+    document.body.classList.toggle('capability-mode', ['structured', 'needle', 'capacity'].includes(test.scenario));
+    $('.user-input-group').hidden = diagnostic;
+    if (!diagnostic) applyScenarioInput(test.scenario, test.defaultInput);
+    else imageInputArea.style.display = 'none';
+    const nonStreaming = ['structured', 'needle', 'capacity'].includes(test.scenario);
+    streamToggleEl.disabled = nonStreaming;
+    $('#streamModeHint').textContent = nonStreaming ? '此项使用非流式响应，以校验完整结果与用量。'
+      : '关闭后使用非流式 JSON 响应';
+    const controller = scenarioControllers.get(activeControllerId);
+    if (controller && controller.activate) controller.activate(getRequestContext());
+    updateSharedRunButtons();
+    window.dispatchEvent(new CustomEvent('apitest:scenario-change', {
+      detail: { scenario: currentActiveScenario, protocol: getActiveProtocol() }
+    }));
+  }
+
+  async function runScenarioController() {
+    const id = activeControllerId;
+    const controller = scenarioControllers.get(id);
+    if (!controller || requestPending || scenarioRunState.running) return;
+    let ctx;
+    try { ctx = captureRunContext(); }
+    catch (error) { errorMessage.textContent = sanitizeSensitiveText(error.message); return; }
+    errorMessage.textContent = '';
+    const epoch = ++runEpoch;
+    setScenarioRunState(id, { running: true, label: '运行中…' });
+    const wrapperRevision = scenarioStateRevision;
+    try { await controller.run(ctx); }
+    catch (error) {
+      if (epoch === runEpoch && error.name !== 'AbortError') errorMessage.textContent = sanitizeSensitiveText(error.message);
+    } finally {
+      if (epoch === runEpoch && currentActiveScenario === id && wrapperRevision === scenarioStateRevision) {
+        setScenarioRunState(id, { running: false, label: defaultRunLabel() });
+      }
+    }
   }
 
   // 切换测试场景
   function setActiveScenario(scenario) {
+    if (scenario === currentActiveScenario) return;
     abortCurrentRequest();
     $$('#testType .seg-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.scenario === scenario));
     // 查找对应的默认输入（OpenAI 使用动态生成的测试列表）
     const tests = currentVendor === 'openai' ? getOpenaiTests() : (vendorTests[currentVendor] || []);
     const test = tests.find(t => t.scenario === scenario);
-    if (test) {
-      applyScenarioInput(scenario, test.defaultInput);
-    }
+    if (test) activateScenario(test);
   }
 
   // 厂商切换事件
@@ -2407,11 +2805,7 @@
     openaiProtocolWrap.addEventListener('click', (e) => {
       const btn = e.target.closest('.seg-btn');
       if (!btn || !btn.dataset.protocol) return;
-      openaiProtocol = btn.dataset.protocol;
-      $$('#openaiProtocol .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.protocol === openaiProtocol));
-      // 重新渲染测试按钮（更新图片按钮标签）并重置到第一个场景
-      renderTestButtons(currentVendor);
-      clearResults();
+      setActiveVendor('openai', { protocol: btn.dataset.protocol });
     });
   }
 
@@ -2420,6 +2814,7 @@
     testTypeWrap.addEventListener('click', (e) => {
       const btn = e.target.closest('.seg-btn');
       if (!btn || !btn.dataset.scenario) return;
+      if (btn.dataset.scenario === currentActiveScenario) return;
       setActiveScenario(btn.dataset.scenario);
       clearResults();
     });
@@ -2427,23 +2822,27 @@
 
   // Test function call flow (multiple scenarios)
   testBtn.addEventListener('click', async () => {
-    if (currentVendor === 'fingerprint') return;
+    if (activeControllerId) return runScenarioController();
     abortCurrentRequest();
-    const apiUrl = apiUrlEl.value.trim();
-    const apiKey = apiKeyEl.value.trim();
-    const model = (modelEl.value || SYSTEM_DEFAULTS.model).trim();
+    let ctx;
+    try { ctx = captureRunContext(); }
+    catch (error) { errorMessage.textContent = sanitizeSensitiveText(error.message); return; }
+    const { apiUrl, apiKey, model } = ctx;
     if (!apiUrl || !apiKey) { await appAlert('请填写 API URL 和 API Key'); return; }
     // 自动缓存最近使用的连接
     saveRecentConnection(apiUrl, apiKey, model);
     errorMessage.textContent = '';
-    testBtn.disabled = true; testBtn.textContent = '请求中...';
     // 发起新请求前自动清空历史记录
     clearResults();
     requestPending = true; // 确保在 updateClearBtnState 之前设置
     updateClearBtnState();
 
     currentAbortController = new AbortController();
-    const signal = currentAbortController.signal;
+    const signal = bindRunContext(currentAbortController.signal, ctx);
+    ordinaryRunContext = ctx;
+    const epoch = runEpoch;
+    scenarioRunState = { running: true, label: '运行中…' };
+    updateSharedRunButtons();
 
     const scenario = testTypeWrap.querySelector('.seg-btn.active')?.dataset.scenario || 'openai_tools';
     currentActiveScenario = scenario;
@@ -2491,6 +2890,7 @@
           responsesEndpoint,
           signal
         });
+        throwIfRequestAborted(signal, epoch);
         addIqTestReference(test, duration);
       }
       else if (scenario === 'openai_juice') {
@@ -2506,6 +2906,7 @@
           responsesEndpoint,
           signal
         });
+        throwIfRequestAborted(signal, epoch);
         addInlineInfo(`响应耗时：${formatDuration(duration)}`);
       }
       else if (scenario === 'openai_tools') {
@@ -2558,8 +2959,8 @@
         const MAX_TURNS = 3;
         while (turn <= MAX_TURNS) {
           const requestBody = { model, messages, tools, tool_choice: 'auto', stream: isStreamEnabled() };
-          if (thinkingToggleEl.checked && effortSelectedValue) {
-            var thParams = buildThinkingParams(model, effortSelectedValue);
+          if (isThinkingEnabled() && getThinkingEffort()) {
+            var thParams = buildThinkingParams(model, getThinkingEffort());
             Object.assign(requestBody, thParams);
           }
           const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
@@ -2758,8 +3159,8 @@
             system: A_SYSTEM_INSTRUCTION,
             stream: isStreamEnabled()
           };
-          if (thinkingToggleEl.checked && effortSelectedValue) {
-            var thParams = buildThinkingParams(model, effortSelectedValue);
+          if (isThinkingEnabled() && getThinkingEffort()) {
+            var thParams = buildThinkingParams(model, getThinkingEffort());
             Object.assign(aReq, thParams);
             ensureAnthropicMaxTokens(aReq);
           }
@@ -2963,8 +3364,8 @@
             contents,
             stream: isStreamEnabled()
           };
-          if (thinkingToggleEl.checked && effortSelectedValue) {
-            var thParams = buildThinkingParams(model, effortSelectedValue);
+          if (isThinkingEnabled() && getThinkingEffort()) {
+            var thParams = buildThinkingParams(model, getThinkingEffort());
             if (!gReq.generationConfig) gReq.generationConfig = {};
             Object.assign(gReq.generationConfig, thParams);
           }
@@ -3163,8 +3564,8 @@
         const MAX_TURNS = 3;
         while (turn <= MAX_TURNS) {
           const rtReq = { model, tools, input: history, instructions: '你不仅能够调用 convert_base 工具，还必须在得到最终计算结果后调用 submit_answer 工具来提交最终答案。', stream: isStreamEnabled() };
-          if (thinkingToggleEl.checked && effortSelectedValue) {
-            var thParams = buildResponsesThinkingParams(model, effortSelectedValue);
+          if (isThinkingEnabled() && getThinkingEffort()) {
+            var thParams = buildResponsesThinkingParams(model, getThinkingEffort());
             Object.assign(rtReq, thParams);
           }
           const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
@@ -3353,8 +3754,8 @@
           input: [{ role: 'user', content: userText || '搜索当前最新的Gemini旗舰模型是？' }],
           stream: isStreamEnabled()
         };
-        if (thinkingToggleEl.checked && effortSelectedValue) {
-          var thParams = buildResponsesThinkingParams(model, effortSelectedValue);
+        if (isThinkingEnabled() && getThinkingEffort()) {
+          var thParams = buildResponsesThinkingParams(model, getThinkingEffort());
           Object.assign(rReq, thParams);
         }
         const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
@@ -3441,8 +3842,8 @@
           contents: [{ role: 'user', parts: [{ text: userText || '搜索当前最新的Gemini旗舰模型是？' }] }],
           stream: isStreamEnabled()
         };
-        if (thinkingToggleEl.checked && effortSelectedValue) {
-          var thParams = buildThinkingParams(model, effortSelectedValue);
+        if (isThinkingEnabled() && getThinkingEffort()) {
+          var thParams = buildThinkingParams(model, getThinkingEffort());
           if (!gReq.generationConfig) gReq.generationConfig = {};
           Object.assign(gReq.generationConfig, thParams);
         }
@@ -3508,8 +3909,8 @@
           contents: [{ role: 'user', parts: [{ text: userText || '这个工具有哪些特点？https://ai.google.dev/gemini-api/docs/url-context' }] }],
           stream: isStreamEnabled()
         };
-        if (thinkingToggleEl.checked && effortSelectedValue) {
-          var thParams = buildThinkingParams(model, effortSelectedValue);
+        if (isThinkingEnabled() && getThinkingEffort()) {
+          var thParams = buildThinkingParams(model, getThinkingEffort());
           if (!gReq.generationConfig) gReq.generationConfig = {};
           Object.assign(gReq.generationConfig, thParams);
         }
@@ -3593,12 +3994,12 @@
           imageUrl = endpoint;
         }
 
-        if (thinkingToggleEl.checked && effortSelectedValue) {
+        if (isThinkingEnabled() && getThinkingEffort()) {
           var thParams;
           if (openaiProtocol === 'responses') {
-            thParams = buildResponsesThinkingParams(model, effortSelectedValue);
+            thParams = buildResponsesThinkingParams(model, getThinkingEffort());
           } else {
-            thParams = buildThinkingParams(model, effortSelectedValue);
+            thParams = buildThinkingParams(model, getThinkingEffort());
           }
           Object.assign(oReq, thParams);
         }
@@ -3691,8 +4092,8 @@
           }],
           stream: isStreamEnabled()
         };
-        if (thinkingToggleEl.checked && effortSelectedValue) {
-          var thParams = buildThinkingParams(model, effortSelectedValue);
+        if (isThinkingEnabled() && getThinkingEffort()) {
+          var thParams = buildThinkingParams(model, getThinkingEffort());
           Object.assign(aReq, thParams);
           ensureAnthropicMaxTokens(aReq);
         }
@@ -3769,8 +4170,8 @@
           }],
           stream: isStreamEnabled()
         };
-        if (thinkingToggleEl.checked && effortSelectedValue) {
-          var thParams = buildThinkingParams(model, effortSelectedValue);
+        if (isThinkingEnabled() && getThinkingEffort()) {
+          var thParams = buildThinkingParams(model, getThinkingEffort());
           if (!gReq.generationConfig) gReq.generationConfig = {};
           Object.assign(gReq.generationConfig, thParams);
         }
@@ -3964,7 +4365,9 @@
         // --- 主路径：multipart ---
         try {
           imageBlob = await imageDataToBlob(currentImageData, signal);
+          throwIfRequestAborted(signal, epoch);
         } catch (blobErr) {
+          throwIfRequestAborted(signal, epoch);
           if (blobErr && blobErr.name === 'AbortError') throw blobErr;
           multipartFailedErr = blobErr;
           addInlineInfo('无法构造 multipart 图片（' + sanitizeSensitiveText(blobErr.message || String(blobErr)) + '），将尝试 JSON 回退');
@@ -3995,6 +4398,7 @@
               signal
             }, null, createOnPhaseCallback());
             imagesEditDone = await handleImagesEditSuccess('响应 #1（multipart）', editResult, editStart, 'multipart');
+            throwIfRequestAborted(signal, epoch);
             if (!imagesEditDone) {
               multipartFailedErr = new Error('multipart 响应未包含图片');
             }
@@ -4009,6 +4413,7 @@
           }
           if (!imagesEditDone && !imageRefForJson) {
             try { imageRefForJson = await blobToDataUrl(imageBlob); } catch (_) { /* ignore */ }
+            throwIfRequestAborted(signal, epoch);
           }
         }
 
@@ -4043,7 +4448,9 @@
                   body: JSON.stringify(body),
                   signal
                 }, null, createOnPhaseCallback());
-                if (await handleImagesEditSuccess(resLabel, jsonResult, jsonStart, 'JSON 回退')) {
+                const editSucceeded = await handleImagesEditSuccess(resLabel, jsonResult, jsonStart, 'JSON 回退');
+                throwIfRequestAborted(signal, epoch);
+                if (editSucceeded) {
                   jsonOk = true;
                   break;
                 }
@@ -4068,14 +4475,13 @@
       }
 
     } catch (err) {
-      if (err.name === 'AbortError') {
-        console.log('Request aborted by user');
+      if (signal.aborted || epoch !== runEpoch || (err && err.name === 'AbortError')) {
         return;
       }
       if (err && err.message === 'ABORT_SILENT') {
         return;
       }
-      console.error(err);
+      console.error(sanitizeSensitiveText(err && (err.message || err)));
       // 清空顶部简要错误，改为在时间线内展示红色错误块
       errorMessage.textContent = '';
       if (err && err.name === 'FetchNetworkError') {
@@ -4090,11 +4496,19 @@
         addInlineError(`请求超时`, { rawText: `${err.message}\n建议：检查 API 服务是否正常响应，或尝试增加超时时间。`, contentType: 'text/plain' });
         return;
       }
-      addInlineError(`错误：${err && (err.message || err)}`, { rawText: sanitizeSensitiveText(err && err.rawText), contentType: err && err.contentType });
+      addInlineError(`错误：${err && (err.message || err)}`, { rawText: err && err.rawText, contentType: err && err.contentType });
+      // Attach the shared error taxonomy so the failure is actionable, not just
+      // a raw provider message. Silently skipped if the core module is absent.
+      var classification = classifyErrorForDisplay(err);
+      if (classification) addInlineInfo(classification);
     } finally {
+      if (epoch !== runEpoch) return;
       requestPending = false;
+      ordinaryRunContext = null;
+      currentAbortController = null;
+      scenarioRunState = { running: false, label: defaultRunLabel() };
       hideWaiting();
-      testBtn.disabled = false; testBtn.textContent = '发送测试请求';
+      updateSharedRunButtons();
       updateClearBtnState();
       scrollLatestIntoView();
     }
@@ -4104,7 +4518,87 @@
   const CONNECT_TIMEOUT_MS = 120_000;  // 连接超时 120s
   const READ_TIMEOUT_MS    = 120_000;  // 流式读取超时 120s（无数据到达则断开）
 
-  async function fetchAndStream(url, options, onChunk, onPhase, onReasoningChunk) {
+  function modelRequestProtocol(url, ctx) {
+    let target = url;
+    const proxyUrl = ctx && ctx.proxyUrl;
+    if (proxyUrl && target.startsWith(stripTrailingSlash(proxyUrl) + '/proxy/')) {
+      target = target.slice((stripTrailingSlash(proxyUrl) + '/proxy/').length);
+    }
+    try {
+      const pathname = new URL(target).pathname;
+      if (/\/v1\/chat\/completions\/?$/.test(pathname)) return 'chat_completions';
+      if (/\/v1\/responses\/?$/.test(pathname)) return 'responses';
+      if (/\/v1\/messages\/?$/.test(pathname)) return 'anthropic';
+      if (/\/models\/[^/]+:(?:streamGenerateContent|generateContent)$/.test(pathname)) return 'google';
+    } catch { /* unrecognized URLs use the ordinary network error path */ }
+    return null;
+  }
+
+  function routeWithRunContext(url, ctx) {
+    let target = url;
+    for (const proxy of [ctx.proxyUrl, getProxyUrl()]) {
+      if (!proxy) continue;
+      const prefix = stripTrailingSlash(proxy) + '/proxy/';
+      if (target.startsWith(prefix) && /^https?:\/\//i.test(target.slice(prefix.length))) {
+        target = target.slice(prefix.length);
+        break;
+      }
+    }
+    if (ctx.proxyUrl && (/^http:\/\//i.test(target) || (ctx.httpsProxyEnabled && /^https:\/\//i.test(target)))) {
+      return stripTrailingSlash(ctx.proxyUrl) + '/proxy/' + target;
+    }
+    return target;
+  }
+
+  function prepareModelRequest(url, options, ctx, profileMode) {
+    const protocol = getFetchMethod(options) === 'POST' ? modelRequestProtocol(url, ctx) : null;
+    const unchanged = {
+      url, options,
+      applied: { applied: false, url, headers: options.headers, body: options.body, profileHeaders: {} },
+      transport: { url, headers: options.headers, proxyRouted: isConfiguredProxyRoute(url, ctx), overrideRequested: false }
+    };
+    if (!protocol || profileMode === 'skip' || !ctx.profile || ctx.profile.id === 'default') return unchanged;
+    if (protocol !== ctx.protocol) throw new Error('请求协议与本轮配置不一致，请重新选择协议后运行。');
+    if (typeof options.body !== 'string') throw new Error('客户端画像仅支持 JSON 模型请求。');
+    let body;
+    try { body = JSON.parse(options.body); }
+    catch { throw new Error('模型请求体不是有效的 JSON。'); }
+    const headers = options.headers instanceof Headers || Array.isArray(options.headers)
+      ? Object.fromEntries(options.headers) : options.headers;
+    const applied = window.TestingCore.applyRequestProfile({
+      profile: ctx.profile.id,
+      vendor: protocol === 'anthropic' || protocol === 'google' ? protocol : 'openai',
+      url, headers, body, modelId: ctx.model,
+      options: { enhanced: ctx.profile.enhanced, custom: ctx.profile.custom }
+    });
+    if (applied.mismatch) throw new Error('客户端画像与当前请求不兼容，请切换协议后重试。');
+    const transport = prepareProfileTransport({ ...applied, applied, runContext: ctx });
+    return { url: transport.url, options: { ...options, headers: transport.headers, body: JSON.stringify(applied.body) },
+      applied, transport };
+  }
+
+  async function fetchAndStream(url, options, onChunk, onPhase, onReasoningChunk, preparation = {}) {
+    options = options || {};
+    const epoch = runEpoch;
+    throwIfRequestAborted(options.signal, epoch);
+    const ctx = preparation.runContext || (options.signal && boundRunContexts.get(options.signal)) || captureRunContext();
+    url = routeWithRunContext(url, ctx);
+    const originalBody = options.body;
+    const prepared = prepareModelRequest(url, options, ctx, preparation.profileMode || 'auto');
+    url = prepared.url;
+    options = prepared.options;
+    rememberSensitiveProfileHeaders(options && options.headers);
+    rememberSensitiveProfileHeaders({ 'api-key': ctx.apiKey });
+    rememberSensitiveProfileHeaders(prepared.applied.profileHeaders);
+    if (modelRequestProtocol(url, ctx)) {
+      const pendingIndex = pendingRequestBlocks.findIndex(item => item.body === originalBody && item.block.isConnected);
+      let block;
+      if (pendingIndex >= 0) block = pendingRequestBlocks.splice(pendingIndex, 1)[0].block;
+      else block = addBlock('请求', prepared.applied.body, undefined, { headers: options.headers });
+      block.updateRequest && block.updateRequest(options.body, options.headers);
+    }
+    if (preparation.onPrepared) preparation.onPrepared(prepared);
+    throwIfRequestAborted(options.signal, epoch);
     // Chain external signal with a timeout signal
     const externalSignal = options && options.signal;
     const timeoutController = new AbortController();
@@ -4139,6 +4633,20 @@
       return err;
     }
 
+    function ensureRequestActive(phase) {
+      throwIfRequestAborted(externalSignal, epoch);
+      if (timeoutController.signal.aborted) throw createTimeoutError(phase);
+    }
+
+    const guardCallback = callback => callback && ((...args) => {
+      ensureRequestActive('流式读取');
+      callback(...args);
+      ensureRequestActive('流式读取');
+    });
+    onChunk = guardCallback(onChunk);
+    onPhase = guardCallback(onPhase);
+    onReasoningChunk = guardCallback(onReasoningChunk);
+
     const fetchOptions = Object.assign({}, options, { signal: combinedSignal });
 
     let res;
@@ -4146,23 +4654,24 @@
       res = await fetch(url, fetchOptions);
     } catch (err) {
       clearTimeout(connectTimer);
-      if (err && err.name === 'AbortError') {
-        // Distinguish timeout abort from user abort
-        if (timeoutController.signal.aborted && !(externalSignal && externalSignal.aborted)) {
-          throw createTimeoutError('连接');
-        }
-        throw err;
-      }
+      ensureRequestActive('连接');
+      if (err && err.name === 'AbortError') throw err;
       throw createNetworkFetchError(url, options);
     }
 
     // Connection succeeded — clear connection timer
     clearTimeout(connectTimer);
+    ensureRequestActive('连接');
 
     const contentType = (res.headers.get('content-type') || '').toLowerCase();
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
+      const text = await res.text().catch(err => {
+        ensureRequestActive('响应读取');
+        if (err && err.name === 'AbortError') throw err;
+        return '';
+      });
+      ensureRequestActive('响应读取');
       // 构建 error message：优先 statusText，否则尝试从 JSON 响应体提取错误摘要
       let statusLabel = res.statusText ? `HTTP ${res.status} ${res.statusText}` : `HTTP ${res.status}`;
       if (!res.statusText && text) {
@@ -4190,9 +4699,12 @@
     const isSse = contentType.includes('text/event-stream');
     if (!isSse || !res.body) {
       // Fallback: non-streaming response — skip phases 2 & 3, go directly to phase 4
-      const text = await res.text().catch(() => {
+      const text = await res.text().catch(err => {
+        ensureRequestActive('响应读取');
+        if (err && err.name === 'AbortError') throw err;
         throw createNetworkFetchError(url, options);
       });
+      ensureRequestActive('响应读取');
       // Phase 4: processing response
       if (onPhase) onPhase('processing');
       let json; try { json = JSON.parse(text); } catch { }
@@ -4201,6 +4713,7 @@
       if (json) {
         nonStreamReasoning = extractReasoningFromJson(json);
       }
+      ensureRequestActive('响应读取');
       return { json, text, contentType, isStreamed: false, reasoningText: nonStreamReasoning };
     }
 
@@ -4238,6 +4751,7 @@
     try {
       while (true) {
         const { done, value } = await reader.read();
+        ensureRequestActive('流式读取');
         if (done) { clearTimeout(readTimer); break; }
         // Data received — reset read timeout
         clearTimeout(readTimer);
@@ -4592,13 +5106,18 @@
 
             // Store the last non-empty chunk for potential final data
             finalData = chunk;
-          } catch { /* skip unparseable lines */ }
+          } catch {
+            ensureRequestActive('流式读取');
+            // Skip unparseable lines while the request is still active.
+          }
         }
       }
     } finally {
       clearTimeout(readTimer);
       // Ensure we release the reader on abort
       try { reader.releaseLock(); } catch { }
+      // Canceled/expired streams must not flush buffered text into a new run.
+      ensureRequestActive('流式读取');
       // Handle unclosed CDATA block — treat buffered content as reasoning
       if (inCdataBlock && cdataBuffer) {
         reasoningText += cdataBuffer;
@@ -4630,10 +5149,6 @@
         fullText += thinkOpenBuffer;
         if (onChunk) onChunk(thinkOpenBuffer, fullText);
         thinkOpenBuffer = '';
-      }
-      // If timeout triggered during read, throw timeout error instead of AbortError
-      if (timeoutController.signal.aborted && !(externalSignal && externalSignal.aborted)) {
-        throw createTimeoutError('流式读取');
       }
     }
 
@@ -4685,6 +5200,7 @@
         }));
     }
 
+    ensureRequestActive('流式读取');
     return { json: null, text: fullText, contentType, isStreamed: true, toolCalls, reasoningText: reasoningText || null };
   }
 
@@ -4935,35 +5451,68 @@
     throw e;
   }
 
-  // === HTTP Proxy Logic ===
+  // === Shared HTTP / HTTPS Proxy Controls ===
+  function setProxyExpanded(expanded) {
+    if (!httpProxyRowEl) return;
+    httpProxyRowEl.hidden = !expanded;
+    httpProxyRowEl.classList.toggle('collapsed', !expanded);
+    if (proxyToggleEl) {
+      proxyToggleEl.classList.toggle('expanded', expanded);
+      proxyToggleEl.setAttribute('aria-expanded', String(expanded));
+    }
+  }
+
   function updateHttpProxyUI() {
     const apiUrl = apiUrlEl.value.trim();
     const isHttp = apiUrl.toLowerCase().startsWith('http://');
     const hasProxy = !!getProxyUrl();
-    const isWarning = isHttp && !hasProxy;
+    const enabled = isHttpsProxyEnabled();
+    const isWarning = (isHttp || enabled) && !hasProxy;
+    const alreadyRouted = isConfiguredProxyRoute(normalizeApiUrl(apiUrl));
 
     // Show warning icon when http:// but no proxy configured
     if (httpWarningIconEl) {
-      httpWarningIconEl.style.display = isWarning ? '' : 'none';
+      httpWarningIconEl.style.display = isHttp && !hasProxy ? '' : 'none';
     }
 
-    // Highlight proxy row when http:// (warning state)
+    if (httpsProxyToggleEl) httpsProxyToggleEl.checked = enabled;
+    if (proxyStatusEl) {
+      proxyStatusEl.classList.toggle('is-warning', isWarning);
+      proxyStatusEl.classList.toggle('is-active', !isWarning && (isHttp || enabled || alreadyRouted) && hasProxy);
+      proxyStatusEl.textContent = isWarning ? '未配置代理 · 仍为直连'
+        : (alreadyRouted ? '使用已配置的代理地址'
+          : (isHttp ? 'HTTP 自动使用代理' : (enabled && hasProxy ? 'HTTPS 使用代理' : 'HTTPS 直连')));
+    }
+    if (proxyRoutingHintEl) {
+      proxyRoutingHintEl.textContent = isWarning
+        ? '请填写代理地址。当前请求仍会直连，无法由代理转发画像 UA。'
+        : (alreadyRouted ? '当前地址已含代理路由，不会重复转发。画像头转发仍需开启 HTTPS 开关。'
+          : (isHttp ? 'HTTP 地址沿用自动代理，不受 HTTPS 开关影响。画像头转发仍需开启此开关。'
+          : (enabled ? 'API 请求和模型列表将经此代理转发；代理是否支持画像头需实际测试。'
+            : 'HTTPS 默认直连；HTTP 地址继续自动使用已配置的代理。')));
+    }
+
     if (httpProxyRowEl) {
       httpProxyRowEl.classList.toggle('proxy-row-warning', isWarning);
-      // Auto-expand proxy row when warning state is active
-      if (isWarning && httpProxyRowEl.classList.contains('collapsed')) {
-        httpProxyRowEl.classList.remove('collapsed');
-        if (proxyToggleEl) {
-          proxyToggleEl.classList.add('expanded');
-          proxyToggleEl.setAttribute('aria-expanded', 'true');
-        }
-      }
+      if (isWarning) setProxyExpanded(true);
     }
+    const routeKey = JSON.stringify([getProxyUrl(), isHttpsProxyEnabled()]);
+    if (lastProxyRouteKey !== null && routeKey !== lastProxyRouteKey) abortCurrentRequest();
+    lastProxyRouteKey = routeKey;
+    updateGlobalProfileUI();
+    window.dispatchEvent(new CustomEvent('apitest:proxy-change'));
   }
 
   // Initialize proxy URL from localStorage
   if (httpProxyUrlEl) {
     httpProxyUrlEl.value = getProxyUrl();
+  }
+  if (httpsProxyToggleEl) {
+    httpsProxyToggleEl.checked = isHttpsProxyEnabled();
+    httpsProxyToggleEl.addEventListener('change', () => {
+      saveHttpsProxyEnabled(httpsProxyToggleEl.checked);
+      updateHttpProxyUI();
+    });
   }
 
   // Listen for API URL changes
@@ -4984,26 +5533,7 @@
 
   // Proxy toggle: expand/collapse proxy row
   if (proxyToggleEl && httpProxyRowEl) {
-    function toggleProxyRow(expand) {
-      const isExpanded = expand !== undefined ? expand : httpProxyRowEl.classList.contains('collapsed');
-      if (isExpanded) {
-        httpProxyRowEl.classList.remove('collapsed');
-        proxyToggleEl.classList.add('expanded');
-        proxyToggleEl.setAttribute('aria-expanded', 'true');
-      } else {
-        httpProxyRowEl.classList.add('collapsed');
-        proxyToggleEl.classList.remove('expanded');
-        proxyToggleEl.setAttribute('aria-expanded', 'false');
-      }
-    }
-
-    proxyToggleEl.addEventListener('click', () => toggleProxyRow());
-    proxyToggleEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        toggleProxyRow();
-      }
-    });
+    proxyToggleEl.addEventListener('click', () => setProxyExpanded(httpProxyRowEl.hidden));
   }
 
   // Narrow read-only bridge for auxiliary controllers (e.g. fingerprint panel).
@@ -5012,17 +5542,36 @@
       apiUrl: normalizeApiUrl(apiUrlEl.value.trim()),
       apiKey: apiKeyEl.value.trim(),
       model: (modelEl.value || SYSTEM_DEFAULTS.model || '').trim(),
-      stream: isStreamEnabled(),
-      proxyUrl: getProxyUrl()
+      stream: !streamToggleEl || streamToggleEl.checked,
+      thinking: thinkingToggleEl.checked,
+      effort: effortSelectedValue,
+      proxyUrl: getProxyUrl(),
+      httpsProxyEnabled: isHttpsProxyEnabled(),
+      scenario: currentActiveScenario,
+      profile: { id: selectedProfile, enhanced: profileEnhancedEl.checked, custom: {} },
+      protocol: getActiveProtocol(),
+      vendor: currentVendor
     };
   }
 
   window.APITestBridge = {
     getRequestContext,
+    registerScenarioController,
+    setScenarioRunState,
+    captureRunContext,
+    bindRunContext,
+    // Panels have no protocol selector of their own; they call this when a CLI
+    // profile implies a specific protocol (Claude CLI -> Anthropic, etc).
+    setProtocol: applyProtocol,
+    returnToTests,
     buildEndpoint,
     buildResponsesEndpoint,
     buildAnthropicEndpoint,
+    buildGeminiEndpoint,
+    buildGeminiStreamEndpoint,
     fetchAndStream,
+    prepareProfileTransport,
+    normalizeHeadersForDisplay,
     sanitizeSensitiveText
   };
 

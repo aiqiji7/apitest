@@ -14,9 +14,7 @@
   if (!panel) return;
 
   var modeWrap = document.getElementById('fingerprintMode');
-  var formatWrap = document.getElementById('fingerprintFormat');
-  var startBtn = document.getElementById('fingerprintStartBtn');
-  var stopBtn = document.getElementById('fingerprintStopBtn');
+  var protocolHintEl = document.getElementById('fingerprintProtocolHint');
   var regenerateBtn = document.getElementById('fingerprintRegenerateBtn');
   var parallelToggle = document.getElementById('fingerprintParallelToggle');
   var streamToggle = document.getElementById('fingerprintStreamToggle');
@@ -31,7 +29,6 @@
   var errorEl = document.getElementById('fingerprintError');
   var samplesEl = document.getElementById('fingerprintSamples');
   var manualHintEl = document.getElementById('fingerprintManualHint');
-  var scoreBtn = document.getElementById('fingerprintScoreBtn');
   var resultEl = document.getElementById('fingerprintResult');
 
   var dataState = {
@@ -49,10 +46,14 @@
   var samples = [];
   var sampleEls = [];
   var mode = 'api';
-  var format = 'chat_completions';
   var runEpoch = 0;
   var lastAnalysis = null;
   var activated = false;
+  var activationEpoch = 0;
+  var selectedProtocol = '';
+  var roundContext = null;
+  var operations = [];
+  var scoreRevision = 0;
 
   // ---------------------------------------------------------------------
   // Small DOM / state helpers
@@ -85,6 +86,7 @@
   }
 
   function setStatus(text, state) {
+    if (!statusEl) return;
     statusEl.textContent = text;
     statusEl.classList.remove('is-busy', 'is-done', 'is-error');
     if (state) statusEl.classList.add('is-' + state);
@@ -100,7 +102,7 @@
     errorEl.hidden = true;
   }
 
-  function sanitizeError(err) {
+  function sanitizeError(err, runContext) {
     var message = err && err.message ? String(err.message) : String(err || '未知错误');
     var bridge = window.APITestBridge;
     if (bridge && typeof bridge.sanitizeSensitiveText === 'function') {
@@ -112,6 +114,10 @@
     }
     if (ctx && ctx.apiKey) {
       message = message.split(ctx.apiKey).join('[REDACTED]');
+    }
+    if (runContext && runContext.apiKey) {
+      message = message.split(runContext.apiKey).join('[REDACTED]');
+      message = message.split(encodeURIComponent(runContext.apiKey)).join('[REDACTED]');
     }
     return message || '未知错误';
   }
@@ -452,7 +458,9 @@
       parsedNumbers: 0,
       error: '',
       controller: null,
-      runId: 0
+      runId: 0,
+      runContext: null,
+      retrying: false
     };
   }
 
@@ -520,12 +528,12 @@
 
     textarea.addEventListener('input', function () {
       var sample = samples[index];
-      if (!sample) return;
+      if (!sample || mode !== 'manual') return;
+      cancelWork(true);
       sample.text = textarea.value;
       sample.parsedNumbers = countParsed(sample.text);
       sample.error = '';
       sample.status = 'idle';
-      runEpoch += 1;
       lastAnalysis = null;
       resetResult();
       updateSampleCard(index);
@@ -635,6 +643,7 @@
       els.output.textContent = sample.text || '';
       if (els.output.scrollHeight) els.output.scrollTop = els.output.scrollHeight;
       els.retryBtn.hidden = false;
+      els.retryBtn.disabled = !!sample.retrying;
       els.stopBtn.hidden = false;
       els.stopBtn.disabled = !isRunning(sample);
     }
@@ -662,23 +671,21 @@
   }
 
   function updateRunningControls() {
-    var running = samples.some(isRunning);
-    if (mode === 'api') {
-      startBtn.disabled = running;
-      stopBtn.disabled = !running;
-    } else {
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
+    var bridge = window.APITestBridge;
+    if (bridge && typeof bridge.setScenarioRunState === 'function') {
+      var running = activated && (operations.length > 0 || samples.some(isRunning));
+      bridge.setScenarioRunState('fingerprint', {
+        running: running,
+        label: mode === 'manual' ? (running ? '评分中…' : '评分') : (running ? '检测中…' : '开始检测'),
+        stopEnabled: running
+      });
     }
   }
 
   function applyModeUI() {
     var manual = mode === 'manual';
-    startBtn.hidden = manual;
-    stopBtn.hidden = manual;
-    regenerateBtn.hidden = false;
-    manualHintEl.hidden = !manual;
-    scoreBtn.hidden = !manual;
+    if (regenerateBtn) regenerateBtn.hidden = false;
+    if (manualHintEl) manualHintEl.hidden = !manual;
     updateRunningControls();
     renderSamples();
   }
@@ -693,38 +700,38 @@
     }
   }
 
-  function updateFormatButtons() {
-    if (!formatWrap) return;
-    var buttons = formatWrap.querySelectorAll('.seg-btn');
-    for (var i = 0; i < buttons.length; i += 1) {
-      var active = buttons[i].getAttribute('data-format') === format;
-      buttons[i].classList.toggle('active', active);
-      buttons[i].setAttribute('aria-pressed', active ? 'true' : 'false');
-    }
-  }
-
   // ---------------------------------------------------------------------
   // Request construction + text extraction
   // ---------------------------------------------------------------------
 
-  function buildRequestContext() {
+  function captureContext(context) {
     var bridge = window.APITestBridge;
-    if (!bridge || typeof bridge.getRequestContext !== 'function') {
+    if (!context && bridge && typeof bridge.captureRunContext === 'function') {
+      context = bridge.captureRunContext();
+    }
+    if (!context) {
       throw new Error('页面桥接尚未就绪，请刷新页面后重试');
     }
-    var ctx = bridge.getRequestContext();
+    var ctx = JSON.parse(JSON.stringify(context));
+    if (['chat_completions', 'responses', 'anthropic', 'google'].indexOf(ctx.protocol) === -1) {
+      throw new Error('当前协议不支持模型指纹检测');
+    }
+    ctx.stream = typeof ctx.stream === 'boolean' ? ctx.stream : (streamToggle ? !!streamToggle.checked : true);
+    return ctx;
+  }
+
+  function validateRequestContext(ctx) {
     if (!ctx.apiUrl) throw new Error('请先填写 API URL');
     if (!ctx.apiKey) throw new Error('请先填写 API Key');
     if (!ctx.model) throw new Error('请先填写模型');
-    return ctx;
   }
 
   function buildRequest(ctx, prompt) {
     var bridge = window.APITestBridge;
-    var stream = streamToggle ? !!streamToggle.checked : true;
+    var stream = ctx.stream;
     var accept = stream ? 'text/event-stream' : 'application/json';
 
-    if (format === 'responses') {
+    if (ctx.protocol === 'responses') {
       return {
         url: bridge.buildResponsesEndpoint(ctx.apiUrl),
         headers: {
@@ -741,13 +748,14 @@
       };
     }
 
-    if (format === 'anthropic') {
+    if (ctx.protocol === 'anthropic') {
       return {
         url: bridge.buildAnthropicEndpoint(ctx.apiUrl),
         headers: {
           'Content-Type': 'application/json',
           'x-api-key': ctx.apiKey,
           'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
           'Accept': accept
         },
         body: {
@@ -755,6 +763,19 @@
           max_tokens: 8192,
           messages: [{ role: 'user', content: prompt }],
           stream: stream
+        }
+      };
+    }
+
+    if (ctx.protocol === 'google') {
+      return {
+        url: stream
+          ? bridge.buildGeminiStreamEndpoint(ctx.apiUrl, ctx.model, ctx.apiKey)
+          : bridge.buildGeminiEndpoint(ctx.apiUrl, ctx.model, ctx.apiKey),
+        headers: { 'Content-Type': 'application/json', 'Accept': accept },
+        body: {
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 8192 }
         }
       };
     }
@@ -814,12 +835,68 @@
       }).map(function (block) { return block.text; }).join('');
     }
 
+    if (requestFormat === 'google') {
+      var candidate = json.candidates && json.candidates[0];
+      var parts = candidate && candidate.content && candidate.content.parts;
+      return (Array.isArray(parts) ? parts : []).filter(function (part) {
+        return part && !part.thought && typeof part.text === 'string';
+      }).map(function (part) { return part.text; }).join('');
+    }
+
     return '';
   }
 
   // ---------------------------------------------------------------------
   // Sampling
   // ---------------------------------------------------------------------
+
+  function isCurrent(epoch, expectedMode) {
+    return activated && epoch === runEpoch && (!expectedMode || mode === expectedMode);
+  }
+
+  function hasOperation(kind) {
+    return operations.some(function (operation) { return operation.kind === kind; });
+  }
+
+  function runOperation(kind, context, work) {
+    var operation = { kind: kind, epoch: runEpoch, context: context, promise: null, cancel: null };
+    var cancelled = new Promise(function (resolve) { operation.cancel = resolve; });
+    // Register before yielding, so repeated shared runs cannot enter during loading.
+    operations.push(operation);
+    var task = Promise.resolve().then(function () {
+      if (!isCurrent(operation.epoch)) return;
+      return work(operation);
+    });
+    operation.promise = Promise.race([task, cancelled]).finally(function () {
+      var index = operations.indexOf(operation);
+      if (index === -1) return;
+      operations.splice(index, 1);
+      updateRunningControls();
+    });
+    updateRunningControls();
+    return operation.promise;
+  }
+
+  async function runScenario(context) {
+    var activation = activationEpoch;
+    await (mode === 'manual' ? scoreManual() : startAll(context));
+    // Internal stop/scoring or regeneration may replace the awaited operation.
+    // Keep the shared run pending until those controls have also finished.
+    while (activated && activation === activationEpoch && operations.length) {
+      await Promise.all(operations.map(function (operation) { return operation.promise; }));
+    }
+  }
+
+  function cancelWork(markStopped) {
+    runEpoch += 1;
+    scoreRevision += 1;
+    var previous = operations;
+    operations = [];
+    previous.forEach(function (operation) { operation.cancel(); });
+    abortSamples(markStopped);
+    updateRunningControls();
+    return runEpoch;
+  }
 
   function resetSampleState(sample) {
     sample.runId += 1;
@@ -832,6 +909,8 @@
     sample.elapsedMs = null;
     sample.parsedNumbers = 0;
     sample.error = '';
+    sample.runContext = null;
+    sample.retrying = false;
   }
 
   function abortSamples(markStopped) {
@@ -841,6 +920,7 @@
         try { sample.controller.abort(); } catch (e) { /* ignore */ }
         sample.controller = null;
       }
+      sample.retrying = false;
       if (markStopped && isRunning(sample)) {
         sample.status = 'aborted';
         sample.error = '已停止';
@@ -855,9 +935,9 @@
     if (!dataState.ready) throw new Error('参考数据尚未就绪');
   }
 
-  async function runSample(index) {
+  async function runSample(index, ctx, epoch) {
     var sample = samples[index];
-    if (!sample) return false;
+    if (!sample || !isCurrent(epoch, 'api')) return false;
 
     var myRun = sample.runId + 1;
     sample.runId = myRun;
@@ -865,6 +945,11 @@
       try { sample.controller.abort(); } catch (e) { /* ignore */ }
     }
     sample.controller = new AbortController();
+    sample.runContext = ctx;
+    var controller = sample.controller;
+    function current() {
+      return isCurrent(epoch, 'api') && samples[index] === sample && sample.runId === myRun;
+    }
     sample.status = 'requesting';
     sample.text = '';
     sample.parsedNumbers = 0;
@@ -875,36 +960,44 @@
 
     var started = nowMs();
     try {
-      var ctx = buildRequestContext();
+      validateRequestContext(ctx);
       var request = buildRequest(ctx, sample.challenge.prompt);
+      var bridge = window.APITestBridge;
+      var signal = controller.signal;
+      if (typeof bridge.bindRunContext === 'function') {
+        signal = bridge.bindRunContext(signal, ctx) || signal;
+      }
+      if (!current()) return false;
       var result = await window.APITestBridge.fetchAndStream(
         request.url,
         {
           method: 'POST',
           headers: request.headers,
           body: JSON.stringify(request.body),
-          signal: sample.controller.signal
+          signal: signal
         },
         function (chunk, full) {
-          if (samples[index] !== sample || sample.runId !== myRun) return;
+          if (!current()) return;
           sample.text = typeof full === 'string' ? full : (sample.text + (chunk || ''));
           sample.status = 'streaming';
           updateSampleLive(index);
         },
         function (phase) {
-          if (samples[index] !== sample || sample.runId !== myRun) return;
+          if (!current()) return;
           if (phase === 'receiving_data') {
             sample.status = 'streaming';
             updateSampleCard(index);
           }
-        }
+        },
+        null,
+        { runContext: ctx }
       );
 
-      if (samples[index] !== sample || sample.runId !== myRun) return false;
+      if (!current()) return false;
 
       var text = result && result.isStreamed
         ? result.text
-        : extractNonStreamText(result && result.json, format);
+        : extractNonStreamText(result && result.json, ctx.protocol);
       sample.text = text || '';
       sample.elapsedMs = nowMs() - started;
       sample.parsedNumbers = countParsed(sample.text);
@@ -922,14 +1015,14 @@
       updateRunningControls();
       return sample.status === 'done';
     } catch (err) {
-      if (samples[index] !== sample || sample.runId !== myRun) return false;
+      if (!current()) return false;
       sample.elapsedMs = nowMs() - started;
       if (isAbortError(err)) {
         sample.status = 'aborted';
         sample.error = '已停止';
       } else {
         sample.status = 'error';
-        sample.error = sanitizeError(err);
+        sample.error = sanitizeError(err, ctx);
       }
       updateSampleCard(index);
       updateRunningControls();
@@ -939,154 +1032,148 @@
     }
   }
 
-  async function startAll() {
-    if (mode !== 'api') return;
+  function startAll(context) {
+    if (!activated || mode !== 'api') return Promise.resolve();
+    if (operations.length) return Promise.all(operations.map(function (operation) { return operation.promise; }));
     clearError();
-
+    var ctx;
     try {
-      await ensureReadyForScoring();
+      ctx = captureContext(context);
+      validateRequestContext(ctx);
     } catch (err) {
-      if (!err || !err.lmfpdDataError) {
-        setStatus('请求失败', 'error');
-        showError(sanitizeError(err));
-      }
-      return;
-    }
-    if (!window.LMFPD) {
       setStatus('请求失败', 'error');
-      showError('检测核心尚未加载');
-      return;
+      showError(sanitizeError(err, ctx));
+      updateRunningControls();
+      return Promise.resolve();
     }
-
-    ensureChallenges();
-
-    var epoch = runEpoch + 1;
-    runEpoch = epoch;
-    lastAnalysis = null;
-
+    if (selectedProtocol && ctx.protocol !== selectedProtocol) {
+      invalidateRound();
+    }
+    selectedProtocol = ctx.protocol;
+    var epoch = cancelWork(true);
+    var runMode = mode;
+    var parallel = parallelToggle ? !!parallelToggle.checked : true;
+    roundContext = ctx;
     samples.forEach(resetSampleState);
     renderSamples();
     resetResult();
-    clearError();
-
-    try {
-      buildRequestContext();
-    } catch (err) {
-      setStatus('请求失败', 'error');
-      showError(sanitizeError(err));
-      return;
-    }
-
-    setStatus('正在请求 3 条样本…', 'busy');
-    updateRunningControls();
-
-    var parallel = parallelToggle ? !!parallelToggle.checked : true;
-    if (parallel) {
-      await Promise.allSettled(samples.map(function (_, index) {
-        return runSample(index);
-      }));
-    } else {
-      for (var i = 0; i < samples.length; i += 1) {
-        if (epoch !== runEpoch) break;
-        await runSample(i);
+    setStatus('正在准备检测…', 'busy');
+    return runOperation('all', ctx, async function () {
+      try {
+        await ensureReadyForScoring();
+        if (!isCurrent(epoch, runMode)) return;
+        ensureChallenges();
+        samples.forEach(function (sample) { sample.runContext = ctx; });
+        var plannedRuns = samples.map(function (sample) { return sample.runId; });
+        setStatus('正在请求 3 条样本…', 'busy');
+        if (parallel) {
+          await Promise.allSettled(samples.map(function (_, index) {
+            if (samples[index].retrying || samples[index].status === 'aborted') return false;
+            return runSample(index, ctx, epoch);
+          }));
+        } else {
+          for (var i = 0; i < samples.length; i += 1) {
+            if (!isCurrent(epoch, runMode)) return;
+            // A retry/stop can take ownership of a sample before its serial turn.
+            if (!samples[i].retrying && samples[i].status !== 'aborted' && samples[i].runId === plannedRuns[i]) {
+              await runSample(i, ctx, epoch);
+            }
+          }
+        }
+        while (samples.some(function (sample) { return isRunning(sample) || sample.retrying; })) {
+          if (!isCurrent(epoch, runMode)) return;
+          await new Promise(function (resolve) { setTimeout(resolve, 50); });
+        }
+        if (isCurrent(epoch, runMode)) await scoreCurrentSamples(epoch);
+      } catch (err) {
+        if (!isCurrent(epoch, runMode)) return;
+        if (!err || !err.lmfpdDataError) showError(sanitizeError(err, ctx));
+        setStatus('请求失败', 'error');
       }
-    }
-
-    if (epoch !== runEpoch) return;
-
-    // A per-sample retry can start a new run outside the awaited list above.
-    // Wait for it (and any other in-flight sample) to settle before scoring,
-    // while still letting stopAll/deactivate cancel via the epoch guard.
-    while (samples.some(isRunning)) {
-      await new Promise(function (resolve) { setTimeout(resolve, 50); });
-      if (epoch !== runEpoch) return;
-    }
-
-    updateRunningControls();
-    await scoreCurrentSamples(epoch);
+    });
   }
 
   function stopAll() {
-    var epoch = runEpoch + 1;
-    runEpoch = epoch;
-
-    samples.forEach(function (sample, index) {
-      sample.runId += 1;
-      if (sample.controller) {
-        try { sample.controller.abort(); } catch (e) { /* ignore */ }
-        sample.controller = null;
-      }
-      if (isRunning(sample)) {
-        sample.status = 'aborted';
-        sample.error = '已停止';
-        updateSampleCard(index);
-      }
-    });
-
+    var epoch = cancelWork(true);
     setStatus('已停止', '');
-    updateRunningControls();
-
     var hasAnyNumbers = samples.some(function (sample) {
       return countParsed(sample.text) > 0;
     });
-    if (dataState.ready && hasAnyNumbers) {
-      scoreCurrentSamples(epoch);
+    if (activated && dataState.ready && hasAnyNumbers) {
+      return runOperation('score', roundContext, function () { return scoreCurrentSamples(epoch); });
     }
+    return Promise.resolve();
   }
 
-  async function retrySample(index) {
-    if (mode !== 'api') return;
-    clearError();
-
-    var epoch = runEpoch;
-    try {
-      await ensureReadyForScoring();
-    } catch (err) {
-      return;
-    }
-    if (epoch !== runEpoch) return;
-
+  function retrySample(index) {
+    if (!activated || mode !== 'api' || hasOperation('regenerate')) return Promise.resolve();
     var sample = samples[index];
-    if (!sample) return;
-
-    var usedLengths = samples.filter(function (_, i) {
-      return i !== index;
-    }).map(function (item) {
-      return item.challenge.expected_count;
-    });
-    var replacement = window.LMFPD.generateChallenges(1, usedLengths)[0];
-
+    if (!sample || sample.retrying) return Promise.resolve();
+    var ctx;
+    try {
+      // Keep the original round's credentials/profile even after form edits.
+      ctx = sample.runContext || roundContext || captureContext();
+      validateRequestContext(ctx);
+    } catch (err) {
+      showError(sanitizeError(err, ctx));
+      return Promise.resolve();
+    }
+    clearError();
+    var epoch = runEpoch;
+    scoreRevision += 1;
+    var retryToken = {};
+    sample.retrying = retryToken;
     sample.runId += 1;
     if (sample.controller) {
       try { sample.controller.abort(); } catch (e) { /* ignore */ }
       sample.controller = null;
     }
-    sample.challenge = replacement;
-    sample.text = '';
-    sample.status = 'idle';
-    sample.elapsedMs = null;
-    sample.parsedNumbers = 0;
-    sample.error = '';
-    lastAnalysis = null;
+    var retryId = sample.runId;
+    sample.status = 'requesting';
+    sample.runContext = ctx;
+    if (!roundContext) roundContext = ctx;
     resetResult();
     updateSampleCard(index);
     setStatus('正在重试样本 ' + (index + 1) + '…', 'busy');
-
-    await runSample(index);
-    if (epoch !== runEpoch) return;
-
-    if (!samples.some(isRunning)) {
-      await scoreCurrentSamples(epoch);
-    } else {
-      setStatus('样本 ' + (index + 1) + ' 已更新', '');
-    }
-    updateRunningControls();
+    return runOperation('retry', ctx, async function () {
+      try {
+        await ensureReadyForScoring();
+        if (!isCurrent(epoch, 'api') || samples[index] !== sample || sample.runId !== retryId) return;
+        var usedLengths = samples.filter(function (_, i) { return i !== index; }).map(function (item) {
+          return item.challenge.expected_count;
+        });
+        sample.challenge = window.LMFPD.generateChallenges(1, usedLengths)[0];
+        await runSample(index, ctx, epoch);
+        if (sample.retrying !== retryToken) return;
+      } catch (err) {
+        if (!isCurrent(epoch, 'api') || sample.runId !== retryId) return;
+        sample.status = 'error';
+        sample.error = sanitizeError(err, ctx);
+      } finally {
+        if (isCurrent(epoch, 'api') && samples[index] === sample && sample.retrying === retryToken) {
+          sample.retrying = false;
+          updateSampleCard(index);
+        }
+      }
+      if (isCurrent(epoch, 'api') && !samples.some(isRunning)) {
+        // The round may already be painting a score invalidated by this retry.
+        // Let it finish, then score here only if it did not publish fresh results.
+        var rounds = operations.filter(function (operation) { return operation.kind === 'all'; });
+        if (rounds.length) await Promise.all(rounds.map(function (operation) { return operation.promise; }));
+        if (!isCurrent(epoch, 'api') || lastAnalysis || samples.some(function (item) {
+          return isRunning(item) || item.retrying;
+        })) return;
+        await scoreCurrentSamples(epoch);
+      }
+    });
   }
 
   function stopSample(index) {
     var sample = samples[index];
     if (!sample) return;
 
+    scoreRevision += 1;
+    sample.retrying = false;
     sample.runId += 1;
     if (sample.controller) {
       try { sample.controller.abort(); } catch (e) { /* ignore */ }
@@ -1100,8 +1187,9 @@
 
     setStatus('样本 ' + (index + 1) + ' 已停止', '');
     updateRunningControls();
-    if (!samples.some(isRunning) && dataState.ready) {
-      scoreCurrentSamples(runEpoch);
+    if (!operations.length && !samples.some(isRunning) && dataState.ready && activated) {
+      var epoch = runEpoch;
+      handleAsync(runOperation('score', roundContext, function () { return scoreCurrentSamples(epoch); }));
     }
   }
 
@@ -1111,23 +1199,26 @@
 
   async function scoreCurrentSamples(epoch) {
     if (typeof epoch !== 'number') epoch = runEpoch;
-    if (epoch !== runEpoch) return;
+    if (!isCurrent(epoch)) return;
+    var revision = ++scoreRevision;
+    function current() { return isCurrent(epoch) && revision === scoreRevision; }
 
     clearError();
     try {
       await ensureReadyForScoring();
     } catch (err) {
+      if (!current()) return;
       if (!err || !err.lmfpdDataError) {
         setStatus('评分失败', 'error');
         showError(sanitizeError(err));
       }
       return;
     }
-    if (epoch !== runEpoch) return;
+    if (!current()) return;
 
     setStatus('计算中…', 'busy');
     await nextPaint();
-    if (epoch !== runEpoch) return;
+    if (!current()) return;
 
     try {
       var outputs = samples.map(function (sample) {
@@ -1142,12 +1233,12 @@
         dataState.detector,
         { allowPartial: true }
       );
-      if (epoch !== runEpoch) return;
+      if (!current()) return;
       lastAnalysis = analysis;
       renderAnalysis(analysis);
       setStatus(scoringStatusText(analysis), 'done');
     } catch (err) {
-      if (epoch !== runEpoch) return;
+      if (!current()) return;
       setStatus('评分失败', 'error');
       showError(sanitizeError(err));
     }
@@ -1172,17 +1263,29 @@
   }
 
   function scoreManual() {
+    if (!activated || mode !== 'manual') return Promise.resolve();
+    if (operations.length) return Promise.all(operations.map(function (operation) { return operation.promise; }));
+    var epoch = cancelWork(true);
     clearError();
-    samples.forEach(function (sample, index) {
-      var els = sampleEls[index];
-      if (els) sample.text = els.textarea.value;
-      sample.parsedNumbers = countParsed(sample.text);
-      updateSampleCard(index);
+    setStatus('正在准备评分…', 'busy');
+    return runOperation('manual', null, async function () {
+      try {
+        await ensureReadyForScoring();
+        if (!isCurrent(epoch, 'manual')) return;
+        ensureChallenges();
+        samples.forEach(function (sample, index) {
+          var els = sampleEls[index];
+          if (els) sample.text = els.textarea.value;
+          sample.parsedNumbers = countParsed(sample.text);
+          updateSampleCard(index);
+        });
+        await scoreCurrentSamples(epoch);
+      } catch (err) {
+        if (!isCurrent(epoch, 'manual')) return;
+        if (!err || !err.lmfpdDataError) showError(sanitizeError(err));
+        setStatus('评分失败', 'error');
+      }
     });
-
-    var epoch = runEpoch + 1;
-    runEpoch = epoch;
-    return scoreCurrentSamples(epoch);
   }
 
   function resetResult() {
@@ -1444,18 +1547,52 @@
   // Panel activation / deactivation
   // ---------------------------------------------------------------------
 
-  function activatePanel() {
+  function invalidateRound() {
+    cancelWork(true);
+    roundContext = null;
+    samples.forEach(resetSampleState);
+    renderSamples();
+    resetResult();
+    clearError();
+  }
+
+  function clear() {
+    invalidateRound();
+    setStatus(mode === 'manual' ? '手动模式：粘贴三条回答后点击评分' : '尚未开始', '');
+    updateRunningControls();
+  }
+
+  function activatePanel(context) {
+    var ctx;
+    try {
+      ctx = captureContext(context);
+    } catch (err) {
+      setStatus('加载失败', 'error');
+      showError(sanitizeError(err));
+      return;
+    }
+    var protocolChanged = selectedProtocol && ctx.protocol !== selectedProtocol;
+    if (protocolChanged) invalidateRound();
+    selectedProtocol = ctx.protocol;
+    if (!activated || protocolChanged) activationEpoch += 1;
     activated = true;
     panel.hidden = false;
     updateModeButtons();
-    updateFormatButtons();
     applyModeUI();
+    var labels = { chat_completions: 'Chat Completions', responses: 'Responses', anthropic: 'Anthropic', google: 'Gemini' };
+    var hint = '当前协议：' + labels[selectedProtocol];
+    if (protocolHintEl) protocolHintEl.textContent = hint;
+    else if (!operations.length && (protocolChanged || !lastAnalysis)) {
+      setStatus((mode === 'manual' ? '手动模式 · ' : '尚未开始 · ') + hint, '');
+    }
 
+    var epoch = activationEpoch;
     ensureCore().then(function () {
-      if (!activated) return;
+      if (!activated || epoch !== activationEpoch) return;
       ensureChallenges();
       renderSamples();
     }).catch(function (err) {
+      if (!activated || epoch !== activationEpoch) return;
       setStatus('加载失败', 'error');
       showError(sanitizeError(err));
     });
@@ -1467,10 +1604,9 @@
 
   function deactivate() {
     activated = false;
-    runEpoch += 1;
-    abortSamples(true);
-    updateRunningControls();
-    if (statusEl.classList.contains('is-busy')) setStatus('已停止', '');
+    activationEpoch += 1;
+    cancelWork(true);
+    if (statusEl && statusEl.classList.contains('is-busy')) setStatus('已停止', '');
     panel.hidden = true;
   }
 
@@ -1482,21 +1618,8 @@
       return;
     }
 
+    cancelWork(true);
     mode = next;
-    if (mode === 'manual') {
-      runEpoch += 1;
-      samples.forEach(function (sample) {
-        sample.runId += 1;
-        if (sample.controller) {
-          try { sample.controller.abort(); } catch (e) { /* ignore */ }
-          sample.controller = null;
-        }
-        if (isRunning(sample)) {
-          sample.status = 'aborted';
-          sample.error = '已停止';
-        }
-      });
-    }
 
     updateModeButtons();
     applyModeUI();
@@ -1520,15 +1643,6 @@
     });
   }
 
-  if (formatWrap) {
-    formatWrap.addEventListener('click', function (event) {
-      var button = event.target.closest ? event.target.closest('.seg-btn') : null;
-      if (!button || !button.getAttribute('data-format')) return;
-      format = button.getAttribute('data-format');
-      updateFormatButtons();
-    });
-  }
-
   samplesEl.addEventListener('click', function (event) {
     var button = event.target.closest ? event.target.closest('button[data-action]') : null;
     if (!button) return;
@@ -1544,42 +1658,46 @@
     }
   });
 
-  startBtn.addEventListener('click', function () { handleAsync(startAll()); });
-  stopBtn.addEventListener('click', function () { stopAll(); });
-  regenerateBtn.addEventListener('click', function () { handleAsync(regenerateAll()); });
-  scoreBtn.addEventListener('click', function () { handleAsync(scoreManual()); });
-  dataRetryBtn.addEventListener('click', function () {
-    ensureDataLoaded(true).catch(function () { /* error already shown */ });
+  if (regenerateBtn) regenerateBtn.addEventListener('click', function () { handleAsync(regenerateAll()); });
+  if (dataRetryBtn) dataRetryBtn.addEventListener('click', function () {
+    if (!activated) return;
+    var activation = activationEpoch;
+    handleAsync(ensureDataLoaded(true).then(function () {
+      if (!activated || activation !== activationEpoch) return;
+      ensureChallenges();
+      renderSamples();
+    }).catch(function (err) {
+      if (!err || !err.lmfpdDataError) throw err;
+      // Data-loading errors already have a readable retry state.
+    }));
   });
 
-  window.addEventListener('apitest:vendor-change', function (event) {
-    var vendor = event && event.detail ? event.detail.vendor : '';
-    if (vendor === 'fingerprint') activatePanel();
-    else deactivate();
-  });
-
-  async function regenerateAll() {
+  function regenerateAll() {
+    if (!activated) return Promise.resolve();
+    var epoch = cancelWork(true);
+    roundContext = null;
+    samples.forEach(function (sample) { sample.runContext = null; });
     clearError();
-    try {
-      await ensureCore();
-    } catch (err) {
-      setStatus('加载失败', 'error');
-      showError(sanitizeError(err));
-      return;
-    }
-
-    runEpoch += 1;
-    abortSamples(false);
-    regenerateChallenges();
-    lastAnalysis = null;
     resetResult();
-    setStatus('已重新生成题目', '');
-    updateRunningControls();
+    return runOperation('regenerate', null, async function () {
+      try {
+        await ensureCore();
+        if (!isCurrent(epoch)) return;
+        regenerateChallenges();
+        setStatus('已重新生成题目', '');
+      } catch (err) {
+        if (!isCurrent(epoch)) return;
+        setStatus('加载失败', 'error');
+        showError(sanitizeError(err));
+      }
+    });
   }
 
   function handleAsync(promise) {
+    var epoch = runEpoch;
     if (promise && typeof promise.catch === 'function') {
       promise.catch(function (err) {
+        if (!isCurrent(epoch)) return;
         setStatus('操作失败', 'error');
         showError(sanitizeError(err));
       });
@@ -1591,7 +1709,15 @@
   // ---------------------------------------------------------------------
 
   updateModeButtons();
-  updateFormatButtons();
-  updateRunningControls();
   resetResult();
+  var bridge = window.APITestBridge;
+  if (bridge && typeof bridge.registerScenarioController === 'function') {
+    bridge.registerScenarioController('fingerprint', {
+      activate: activatePanel,
+      deactivate: deactivate,
+      run: runScenario,
+      stop: stopAll,
+      clear: clear
+    });
+  }
 })();
