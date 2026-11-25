@@ -17,23 +17,18 @@ on:
         required: true
         type: string
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+# Default to read-only access; only the deploy job can publish to GitHub Pages.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
-  # Single deploy job since we're just deploying
-  deploy:
-    # Lock only the actual deploy job, so callers never hold this same lock.
-    concurrency:
-      group: "pages"
-      cancel-in-progress: false
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.ref.outputs.sha }}
+      artifact_id: ${{ steps.upload.outputs.artifact_id }}
     steps:
       - name: Resolve exact Pages commit
         id: ref
@@ -61,6 +56,38 @@ jobs:
         with:
           ref: ${{ steps.ref.outputs.sha }}
           persist-credentials: false
+      - name: Stage website runtime files
+        run: |
+          site_dir="$RUNNER_TEMP/apitest-site"
+          mkdir "$site_dir"
+          cp -a index.html assets CNAME .nojekyll LICENSE "$site_dir/"
+      - name: Upload artifact
+        id: upload
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '${{ runner.temp }}/apitest-site'
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.artifact_id != ''
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    # Lock only the actual deploy job, so callers never hold this same lock.
+    concurrency:
+      group: "pages"
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          persist-credentials: false
       - name: Check current main after acquiring Pages lock
         id: target
         run: |
@@ -77,17 +104,6 @@ jobs:
       - name: Setup Pages
         if: steps.target.outputs.current == 'true'
         uses: actions/configure-pages@v5
-      - name: Stage website runtime files
-        if: steps.target.outputs.current == 'true'
-        run: |
-          site_dir="$RUNNER_TEMP/apitest-site"
-          mkdir "$site_dir"
-          cp -a index.html assets CNAME .nojekyll LICENSE "$site_dir/"
-      - name: Upload artifact
-        if: steps.target.outputs.current == 'true'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: '${{ runner.temp }}/apitest-site'
       - name: Recheck current main immediately before deployment
         if: steps.target.outputs.current == 'true'
         id: ready
@@ -100,7 +116,7 @@ jobs:
             printf '%s\n' 'current=true' >> "$GITHUB_OUTPUT"
           else
             printf '%s\n' 'current=false' >> "$GITHUB_OUTPUT"
-            printf '%s\n' 'Skipping Pages deployment; main advanced during upload.' >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' 'Skipping Pages deployment; main has advanced.' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Deploy to GitHub Pages
         if: steps.ready.outputs.current == 'true'

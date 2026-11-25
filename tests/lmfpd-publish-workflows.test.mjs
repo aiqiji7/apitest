@@ -62,6 +62,47 @@ workflow('sync workflow separates read-only candidate, trusted writer, and expli
   }
 })
 
+workflow('Pages builds hand off an exact SHA and uploaded artifact only after successful completion', async () => {
+  const pages = await parseYaml('.github/workflows/static.yml')
+  assert.deepEqual(Object.keys(pages.jobs), ['build', 'deploy'])
+  const { build, deploy } = pages.jobs
+  assert.deepEqual(build.permissions, { contents: 'read' })
+  assert.ok(!build.concurrency)
+  assert.ok(!build.environment)
+  assert.deepEqual(build.outputs, {
+    sha: '${{ steps.ref.outputs.sha }}', artifact_id: '${{ steps.upload.outputs.artifact_id }}',
+  })
+  const resolve = build.steps.find(step => step.id === 'ref')
+  const checkout = build.steps.find(step => step.uses === 'actions/checkout@v4')
+  assert.ok(resolve?.run)
+  assert.equal(checkout.with.ref, '${{ steps.ref.outputs.sha }}')
+  assert.equal(checkout.with['persist-credentials'], 'false')
+  assert.ok(build.steps.indexOf(resolve) < build.steps.indexOf(checkout))
+  const stage = build.steps.find(step => step.name === 'Stage website runtime files')
+  const upload = build.steps.find(step => step.uses === 'actions/upload-pages-artifact@v3')
+  assert.ok(stage?.run)
+  assert.ok(build.steps.indexOf(stage) > build.steps.indexOf(checkout))
+  assert.equal(build.steps.indexOf(upload), build.steps.indexOf(stage) + 1)
+  assert.equal(stage.if, undefined)
+  assert.equal(upload.if, undefined)
+  assert.equal(upload.id, 'upload')
+  assert.deepEqual(upload.with, { path: '${{ runner.temp }}/apitest-site' })
+  assert.deepEqual(build.steps.filter(step => step.uses).map(step => step.uses), [
+    'actions/checkout@v4', 'actions/upload-pages-artifact@v3',
+  ])
+  assert.equal(deploy.needs, 'build')
+  // With no status function override, GitHub applies success() to this condition:
+  // failed/skipped builds and absent upload IDs must never admit a deployment.
+  assert.equal(deploy.if, "needs.build.outputs.artifact_id != ''")
+  for (const job of [build, deploy]) {
+    assert.ok(!Object.hasOwn(job, 'continue-on-error'))
+    for (const step of job.steps) {
+      assert.ok(!Object.hasOwn(step, 'continue-on-error'))
+      assert.doesNotMatch(step.run || '', /\$\{\{/)
+    }
+  }
+})
+
 workflow('all actual Pages deployments share the job lock and exact-SHA stale guards', async () => {
   const pages = await parseYaml('.github/workflows/static.yml')
   assert.deepEqual(pages.on.push.branches, ['main'])
@@ -70,33 +111,36 @@ workflow('all actual Pages deployments share the job lock and exact-SHA stale gu
     description: 'Exact validated main commit to deploy', required: 'true', type: 'string',
   })
   assert.ok(!pages.concurrency)
-  assert.deepEqual(pages.permissions, { contents: 'read', pages: 'write', 'id-token': 'write' })
+  assert.deepEqual(pages.permissions, { contents: 'read' })
   const { deploy } = pages.jobs
+  assert.deepEqual(deploy.permissions, { contents: 'read', pages: 'write', 'id-token': 'write' })
   assert.deepEqual(deploy.concurrency, { group: 'pages', 'cancel-in-progress': 'false' })
   assert.deepEqual(deploy.environment, { name: 'github-pages', url: '${{ steps.deployment.outputs.page_url }}' })
   const steps = deploy.steps
   const index = (name) => steps.findIndex((step) => step.id === name)
-  const checkout = steps.find((step) => step.uses?.startsWith('actions/checkout@'))
-  assert.equal(checkout.with.ref, '${{ steps.ref.outputs.sha }}')
+  const checkout = steps.find((step) => step.uses === 'actions/checkout@v4')
+  assert.equal(checkout.with.ref, '${{ needs.build.outputs.sha }}')
   assert.equal(checkout.with['persist-credentials'], 'false')
-  assert.ok(index('target') > steps.indexOf(checkout))
+  assert.equal(index('target'), steps.indexOf(checkout) + 1)
   const configure = steps.find((step) => step.uses === 'actions/configure-pages@v5')
-  const stage = steps.find((step) => step.name === 'Stage website runtime files')
-  const upload = steps.find((step) => step.uses === 'actions/upload-pages-artifact@v3')
   assert.equal(configure.if, "steps.target.outputs.current == 'true'")
-  assert.equal(stage?.if, "steps.target.outputs.current == 'true'")
-  assert.equal(steps.indexOf(stage), steps.indexOf(configure) + 1)
-  assert.equal(steps.indexOf(upload), steps.indexOf(stage) + 1)
-  assert.equal(upload.if, "steps.target.outputs.current == 'true'")
-  assert.equal(upload.with.path, '${{ runner.temp }}/apitest-site')
-  assert.equal(index('ready'), steps.indexOf(upload) + 1)
+  assert.equal(steps.indexOf(configure), index('target') + 1)
+  assert.equal(index('ready'), steps.indexOf(configure) + 1)
+  assert.equal(steps[index('ready')].if, "steps.target.outputs.current == 'true'")
+  assert.deepEqual(steps[index('ready')].env, { TARGET_SHA: '${{ steps.target.outputs.sha }}' })
   assert.equal(index('deployment'), index('ready') + 1)
   assert.equal(steps[index('deployment')].uses, 'actions/deploy-pages@v4')
   assert.equal(steps[index('deployment')].if, "steps.ready.outputs.current == 'true'")
+  // deploy-pages discovers the default github-pages artifact itself; artifact_id
+  // is a job eligibility/identity output, not a supported action input.
+  assert.equal(steps[index('deployment')].with, undefined)
+  assert.deepEqual(steps.filter(step => step.uses).map(step => step.uses), [
+    'actions/checkout@v4', 'actions/configure-pages@v5', 'actions/deploy-pages@v4',
+  ])
   for (const step of steps) assert.doesNotMatch(step.run || '', /\$\{\{/)
 })
 
-workflow('Pages guards actually skip an old SHA and main advancing during upload', async (t) => {
+workflow('Pages guards actually skip main advancing while deployment waits or after Pages setup', async (t) => {
   const pages = await parseYaml('.github/workflows/static.yml')
   const steps = pages.jobs.deploy.steps
   const scratch = await mkdtemp('/tmp/opencode/lmfpd-pages-')
@@ -133,33 +177,65 @@ workflow('Pages guards actually skip an old SHA and main advancing during upload
   git('add', '.')
   git('commit', '-m', 'Second')
   git('push', 'origin', 'HEAD:refs/heads/main')
-  assert.equal(await guard('ready', { TARGET_SHA: first }), 'current=false\n')
+  const second = git('rev-parse', 'HEAD')
+  // A completed build stays pinned if main moves while building or waiting for the lock.
   git('checkout', '--detach', first)
   assert.equal(await guard('target'), 'current=false\n')
   assert.match(await readFile(summary, 'utf8'), /Skipping stale Pages target/)
+  // A newer target can pass the lock guard, then become stale during Pages setup.
+  git('checkout', '--detach', second)
+  assert.equal(await guard('target'), `current=true\nsha=${second}\n`)
+  assert.equal(await guard('ready', { TARGET_SHA: second }), 'current=true\n')
+  await writeFile(path.join(repo, 'index.html'), 'third')
+  git('add', '.')
+  git('commit', '-m', 'Third')
+  git('push', 'origin', 'HEAD:refs/heads/main')
+  git('checkout', '--detach', second)
+  assert.equal(await guard('ready', { TARGET_SHA: second }), 'current=false\n')
+  assert.match(await readFile(summary, 'utf8'), /Skipping Pages deployment/)
 })
 
 workflow('Pages input resolution pins manual main and rejects malformed SHAs before checkout', async (t) => {
   const pages = await parseYaml('.github/workflows/static.yml')
-  const run = pages.jobs.deploy.steps[0].run
+  const run = pages.jobs.build.steps.find(step => step.id === 'ref').run
   const scratch = await mkdtemp('/tmp/opencode/lmfpd-pages-input-')
   t.after(() => rm(scratch, { recursive: true, force: true }))
   const output = path.join(scratch, 'output')
-  const validate = (event, ref, sha = 'a'.repeat(40)) => spawnSync('bash', ['-e', '-c',
-    'gh() { [[ "$*" == "api repos/test/repo/commits/main --jq .sha" ]] || return 2; printf "%s\\n" "$MANUAL_SHA"; };\n' + run,
-  ], {
-    env: { ...process.env, EVENT_NAME: event, REQUESTED_REF: ref, EVENT_SHA: sha,
-      GITHUB_OUTPUT: output, TARGET_REPOSITORY: 'test/repo', MANUAL_SHA: 'c'.repeat(40) },
-    stdio: 'pipe',
-  }).status
-  assert.equal(validate('schedule', 'b'.repeat(40)), 0)
-  assert.equal(validate('push', ''), 0)
-  assert.equal(validate('workflow_dispatch', ''), 0)
-  assert.match(await readFile(output, 'utf8'), new RegExp(`sha=${'c'.repeat(40)}\\n`))
-  assert.notEqual(validate('schedule', ''), 0)
-  assert.notEqual(validate('workflow_dispatch', 'main'), 0)
-  assert.notEqual(validate('push', '', 'main'), 0)
-  assert.notEqual(validate('schedule', `${'b'.repeat(40)}\nother=value`), 0)
+  const validate = async (event, ref, sha = 'a'.repeat(40)) => {
+    await writeFile(output, '')
+    const result = spawnSync('bash', ['-e', '-c',
+      'gh() { [[ "$*" == "api repos/test/repo/commits/main --jq .sha" ]] || return 2; printf "%s\\n" "$MANUAL_SHA"; };\n' + run,
+    ], {
+      env: { ...process.env, EVENT_NAME: event, REQUESTED_REF: ref, EVENT_SHA: sha,
+        GITHUB_OUTPUT: output, TARGET_REPOSITORY: 'test/repo', MANUAL_SHA: 'c'.repeat(40) },
+      stdio: 'pipe',
+    })
+    return { status: result.status, output: await readFile(output, 'utf8') }
+  }
+  assert.deepEqual(await validate('schedule', 'b'.repeat(40)), { status: 0, output: `sha=${'b'.repeat(40)}\n` })
+  assert.deepEqual(await validate('push', ''), { status: 0, output: `sha=${'a'.repeat(40)}\n` })
+  assert.deepEqual(await validate('workflow_dispatch', ''), { status: 0, output: `sha=${'c'.repeat(40)}\n` })
+  for (const args of [
+    ['schedule', ''], ['workflow_dispatch', 'main'], ['push', '', 'main'],
+    ['schedule', 'b'.repeat(39)], ['schedule', 'B'.repeat(40)],
+    ['schedule', `${'b'.repeat(40)}\nother=value`],
+  ]) {
+    const result = await validate(...args)
+    assert.notEqual(result.status, 0)
+    assert.equal(result.output, '', 'a rejected ref must not publish a SHA for checkout')
+  }
+})
+
+workflow('both workflows have valid shell syntax in every run step', async () => {
+  for (const rel of ['.github/workflows/static.yml', '.github/workflows/sync-lmfpd.yml']) {
+    const parsed = await parseYaml(rel)
+    for (const [job, { steps = [] }] of Object.entries(parsed.jobs)) {
+      for (const step of steps.filter(step => step.run)) {
+        const result = spawnSync('bash', ['-n'], { input: step.run, encoding: 'utf8' })
+        assert.equal(result.status, 0, `${rel}: ${job}/${step.name || step.id}: ${result.stderr}`)
+      }
+    }
+  }
 })
 
 const RUNTIME = ['index.html', 'assets', 'CNAME', '.nojekyll', 'LICENSE']
@@ -205,7 +281,7 @@ const makeFixture = async (repo, missing) => {
 
 workflow('Pages staging copies only runtime files byte-for-byte with quoted paths and leaves source intact', async (t) => {
   const pages = await parseYaml('.github/workflows/static.yml')
-  const stage = pages.jobs.deploy.steps.find(step => step.name === 'Stage website runtime files')
+  const stage = pages.jobs.build.steps.find(step => step.name === 'Stage website runtime files')
   assert.ok(stage?.run)
   const scratch = await mkdtemp('/tmp/opencode/pages-package-')
   t.after(() => rm(scratch, { recursive: true, force: true }))
@@ -223,7 +299,7 @@ workflow('Pages staging copies only runtime files byte-for-byte with quoted path
 
 workflow('Pages staging of the actual repository preserves every runtime byte, asset path and manifest hash', async (t) => {
   const pages = await parseYaml('.github/workflows/static.yml')
-  const stage = pages.jobs.deploy.steps.find(step => step.name === 'Stage website runtime files')
+  const stage = pages.jobs.build.steps.find(step => step.name === 'Stage website runtime files')
   assert.ok(stage?.run)
   const scratch = await mkdtemp('/tmp/opencode/pages-package-real-')
   t.after(() => rm(scratch, { recursive: true, force: true }))
@@ -254,7 +330,7 @@ workflow('Pages staging of the actual repository preserves every runtime byte, a
 
 workflow('Pages staging fails before upload when any required input is missing', async (t) => {
   const pages = await parseYaml('.github/workflows/static.yml')
-  const stage = pages.jobs.deploy.steps.find(step => step.name === 'Stage website runtime files')
+  const stage = pages.jobs.build.steps.find(step => step.name === 'Stage website runtime files')
   assert.ok(stage?.run)
   const scratch = await mkdtemp('/tmp/opencode/pages-package-missing-')
   t.after(() => rm(scratch, { recursive: true, force: true }))
@@ -272,7 +348,7 @@ workflow('Pages staging fails before upload when any required input is missing',
 
 workflow('Pages staging refuses an existing destination without uploading or reusing stale files', async (t) => {
   const pages = await parseYaml('.github/workflows/static.yml')
-  const stage = pages.jobs.deploy.steps.find(step => step.name === 'Stage website runtime files')
+  const stage = pages.jobs.build.steps.find(step => step.name === 'Stage website runtime files')
   assert.ok(stage?.run)
   const scratch = await mkdtemp('/tmp/opencode/pages-package-existing-')
   t.after(() => rm(scratch, { recursive: true, force: true }))

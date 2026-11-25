@@ -28,6 +28,7 @@ node scripts/publish-lmfpd.mjs --base-sha SHA --artifact-root DIR --upstream-ref
 - `.github/workflows/sync-lmfpd.yml`: **Sync LMFPD snapshot**, jobs `candidate` → `commit` → `deploy`.
 - `.github/workflows/static.yml`: **Deploy static content to Pages** accepts
   `workflow_call.inputs.ref: string` (required full lowercase SHA), normal `main` push, or manual dispatch.
+  Jobs `build` → `deploy`; build outputs `sha` and `artifact_id` from the resolved commit and Pages upload.
 
 ## 3. Contracts
 
@@ -99,12 +100,27 @@ Unchanged bytes return base SHA without an empty commit for recovery deployment.
 Pages: `GITHUB_TOKEN` pushes do not retrigger push. All actual Pages jobs share the `pages` lock,
 `cancel-in-progress: false`; check main after lock acquisition and before deploy, skipping stale targets.
 
-**Pages package.** After Setup Pages, create a fresh `$RUNNER_TEMP/apitest-site` directory and copy
+**Pages job boundary.** The reusable Pages workflow defaults to `contents: read`. Its `build` job
+has only that permission: resolve one full SHA, checkout it without persisted credentials, stage and
+upload the site, and emit `sha: steps.ref.outputs.sha` plus `artifact_id: steps.upload.outputs.artifact_id`.
+The upload-pages composite exposes `artifact_id` (underscore). The dependent `deploy` job uses
+`needs: build` and `if: needs.build.outputs.artifact_id != ''`, retaining GitHub's default successful
+dependency requirement. Failed/skipped builds or missing upload IDs must not deploy; do not use
+`always()` or continue-on-error to bypass this. Only `deploy` has Pages/OIDC write permissions,
+the `github-pages` environment and the shared `pages` lock. It checks out `needs.build.outputs.sha`,
+checks current main after acquiring the lock, conditionally runs Setup Pages, then checks main again
+immediately before deployment. The build needs no lock or environment. Keep the sync caller's exact-SHA
+input and avoid a conflicting caller lock. The upload ID is an identity/eligibility output, not an
+input accepted by deploy-pages v4. Separate jobs follow the supported upload/deploy layout, but do
+not guarantee internal artifact visibility; cloud acceptance must still be observed.
+
+**Pages package.** In the `build` job, create a fresh `$RUNNER_TEMP/apitest-site` directory and copy
 only `index.html`, `assets/`, `CNAME`, `.nojekyll`, and `LICENSE`, preserving relative paths and bytes.
 Upload that directory with the existing Pages artifact action. Do not upload the repository root:
 tests/fixtures, scripts, proxy sources, `.trellis`, `.opencode`, and other development files are excluded.
-Missing required inputs or an existing staging directory must fail before upload. Retain action
-versions, permissions, environment, concurrency and exact-SHA/main guards when changing packaging.
+Missing required inputs or an existing staging directory must fail before upload. Setup Pages runs
+later in `deploy`; staging consumes none of its outputs. Preserve action versions, the deploy
+permissions/environment/lock and exact-SHA/main guards when changing packaging.
 Local package validation does not establish Pages service acceptance or diagnose a backend HTTP 500.
 
 **Browser boundary.** On fingerprint activation, fetch VERSION with `cache: 'no-store'`, validate it,
@@ -124,8 +140,11 @@ Refresh adopts a new snapshot. Preserve visible retry errors and controller/run 
 | Candidate extra path/symlink, VERSION digest mismatch or any hash mismatch | Trusted publisher rejects; no commit/push/deployment SHA. |
 | Main advances / normal push denied | Race skips deployment; permission failure exits nonzero. Actions step summary directs inspection; next run uses current main. |
 | No byte changes | No empty commit; emit valid base SHA for redeployment. |
+| Pages build fails/skips or emits no artifact ID | Dependent deployment remains ineligible. |
 | Obsolete Pages target | Skip after lock/current-main checks. |
 | Missing required website input or existing Pages staging directory | Fail staging; do not upload an incomplete or stale package. |
+| Uploaded artifact is absent from deploy-pages' internal query | Report artifact discovery failure separately; later REST visibility does not prove earlier internal availability. |
+| Correct artifact found but Pages creation returns HTTP 500 | Preserve run, target SHA, artifact ID and request ID; do not attribute the error to discovery or claim a local packaging test fixed it. |
 | Browser bad manifest, bundle SRI or data hash/binding failure | Visible retry state, no scoring with mixed data; unrelated page features remain available. |
 
 ## 5. Good / Base / Bad Cases
@@ -154,6 +173,10 @@ git diff --check
   paths, all export/schema/license gates, rank/probability/calibration differences and failed publication.
 - Publisher/workflow tests assert byte-only validation, exact allowlist/digests, no candidate execution,
   denied pushes/main races, permission isolation, explicit reuse, shared lock and stale target guards.
+- Pages workflow tests assert successful build dependency, SHA/upload-ID wiring and job permissions;
+  execute actual input resolution plus main advancing during build/lock wait and after setup. Parse both
+  workflows and check every run block with `bash -n`; the focused entry is
+  `node --test tests/lmfpd-publish-workflows.test.mjs`. Local checks do not emulate artifact service visibility.
 - Execute the actual Pages staging shell with quoted paths; compare all runtime bytes and resource
   paths, verify fingerprint hashes, exclude development files, and reject missing inputs/stale output.
 - Loader unit and real Chrome tests assert initial lazy loading, version/hash URLs, actual SRI/Web
@@ -171,3 +194,7 @@ git diff --check
   **Correct:** pause sync, restore all five via a normal commit, redeploy, and refresh for a new page snapshot.
 - **Wrong:** upload the entire checkout as the public website.
   **Correct:** stage only the runtime allowlist; validate the package before uploading it.
+- **Wrong:** diagnose every red Pages run as the same HTTP 500, or repeatedly rerun a job that uploads
+  into an existing run without checking duplicate artifacts.
+  **Correct:** distinguish upload, discovery, creation and live-publication stages using exact run/SHA/ID
+  evidence; use an explicitly authorized fresh run when a controlled cloud comparison is needed.
