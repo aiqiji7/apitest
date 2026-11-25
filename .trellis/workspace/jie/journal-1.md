@@ -768,3 +768,43 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: 隔离 Pages 网站发布范围
+
+**Date**: 2026-11-26
+**Task**: 隔离 Pages 网站发布范围
+**Branch**: `main`
+
+### Summary
+
+将 Pages 发布包限制为网站运行文件，为持续部署 HTTP 500 做单变量对照。
+
+### Main Changes
+
+排查确认新运行使用正确的新产物，成功与失败运行的 Action 完整 SHA、权限及 Node 警告一致，部署环境允许 main；GitHub 未提供 HTTP 500 内部根因。
+
+仅调整 Pages 暂存与上传范围：保留 index.html、assets/、CNAME、.nojekyll、LICENSE，排除开发记录、测试夹具和构建脚本；Action 版本、权限、并发、环境、精确 SHA 和过期提交守卫不变。
+
+验证：8/8 工作流和实际 shell 测试通过，16 个运行文件共 5,180,423 字节，与已完成 6/6 原生 Chrome 冒烟的站点包逐字节一致。必需输入缺失和旧暂存目录均在上传前失败。YAML、12 个 shell 块、语法及差异检查通过，终审无本地阻塞。
+
+功能提交 98bbd47，任务归档提交 5d13256。用户批准本地修改和提交，由用户推送进行云端对照；未推送、部署或修改远端设置。云端接受结果及 HTTP 500 根因仍待实际验证。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `98bbd47` | fix: 限制 Pages 发布包为网站运行文件 |
+
+### Testing
+
+- [OK] 工作流及实际 shell 测试 8/8；纯站点包原生 Chrome 冒烟 6/6；暂存文件字节、资源引用和指纹摘要一致，YAML、shell 语法及差异检查通过。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 由用户推送 main，验证纯站点发布包是否被 Pages 接受；HTTP 500 根因尚未证实。
