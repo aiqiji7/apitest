@@ -77,12 +77,17 @@ jobs:
       - name: Setup Pages
         if: steps.target.outputs.current == 'true'
         uses: actions/configure-pages@v5
+      - name: Stage website runtime files
+        if: steps.target.outputs.current == 'true'
+        run: |
+          site_dir="$RUNNER_TEMP/apitest-site"
+          mkdir "$site_dir"
+          cp -a index.html assets CNAME .nojekyll LICENSE "$site_dir/"
       - name: Upload artifact
         if: steps.target.outputs.current == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload entire repository
-          path: '.'
+          path: '${{ runner.temp }}/apitest-site'
       - name: Recheck current main immediately before deployment
         if: steps.target.outputs.current == 'true'
         id: ready

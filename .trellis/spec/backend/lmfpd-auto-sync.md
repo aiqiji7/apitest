@@ -99,6 +99,14 @@ Unchanged bytes return base SHA without an empty commit for recovery deployment.
 Pages: `GITHUB_TOKEN` pushes do not retrigger push. All actual Pages jobs share the `pages` lock,
 `cancel-in-progress: false`; check main after lock acquisition and before deploy, skipping stale targets.
 
+**Pages package.** After Setup Pages, create a fresh `$RUNNER_TEMP/apitest-site` directory and copy
+only `index.html`, `assets/`, `CNAME`, `.nojekyll`, and `LICENSE`, preserving relative paths and bytes.
+Upload that directory with the existing Pages artifact action. Do not upload the repository root:
+tests/fixtures, scripts, proxy sources, `.trellis`, `.opencode`, and other development files are excluded.
+Missing required inputs or an existing staging directory must fail before upload. Retain action
+versions, permissions, environment, concurrency and exact-SHA/main guards when changing packaging.
+Local package validation does not establish Pages service acceptance or diagnose a backend HTTP 500.
+
 **Browser boundary.** On fingerprint activation, fetch VERSION with `cache: 'no-store'`, validate it,
 and pin the acquired snapshot for this page. Core URL uses bundle hash and SRI (legacy SHA fallback);
 metadata/detector URLs use their hashes, with Web Crypto verification before parse/decode.
@@ -117,6 +125,7 @@ Refresh adopts a new snapshot. Preserve visible retry errors and controller/run 
 | Main advances / normal push denied | Race skips deployment; permission failure exits nonzero. Actions step summary directs inspection; next run uses current main. |
 | No byte changes | No empty commit; emit valid base SHA for redeployment. |
 | Obsolete Pages target | Skip after lock/current-main checks. |
+| Missing required website input or existing Pages staging directory | Fail staging; do not upload an incomplete or stale package. |
 | Browser bad manifest, bundle SRI or data hash/binding failure | Visible retry state, no scoring with mixed data; unrelated page features remain available. |
 
 ## 5. Good / Base / Bad Cases
@@ -145,6 +154,8 @@ git diff --check
   paths, all export/schema/license gates, rank/probability/calibration differences and failed publication.
 - Publisher/workflow tests assert byte-only validation, exact allowlist/digests, no candidate execution,
   denied pushes/main races, permission isolation, explicit reuse, shared lock and stale target guards.
+- Execute the actual Pages staging shell with quoted paths; compare all runtime bytes and resource
+  paths, verify fingerprint hashes, exclude development files, and reject missing inputs/stale output.
 - Loader unit and real Chrome tests assert initial lazy loading, version/hash URLs, actual SRI/Web
   Crypto/IndexedDB verification, mixed/corrupt bytes, storage fallback, retry and fixed-page snapshot.
   Chrome defaults to `/usr/bin/google-chrome` (`APITEST_E2E_CHROME` overrides it). Cover manual scoring,
@@ -158,3 +169,5 @@ git diff --check
   **Correct:** use trusted byte validation, an exact deployment SHA, explicit Pages reuse and stale guards.
 - **Wrong:** roll back only the detector or replace a core during scoring.
   **Correct:** pause sync, restore all five via a normal commit, redeploy, and refresh for a new page snapshot.
+- **Wrong:** upload the entire checkout as the public website.
+  **Correct:** stage only the runtime allowlist; validate the package before uploading it.
