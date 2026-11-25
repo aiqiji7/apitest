@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Validate no credential exposure and no unrelated UI regressions"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Streaming callbacks and model endpoint compatibility"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Observe profile headers at mock upstream across browser and proxy boundaries"}
+{"file":".trellis/tasks/11-25-proxy-user-agent-override/research/cli-profile-headers.md","reason":"Check exact basic/enhanced/custom profile expectations"}
+{"file":".trellis/tasks/11-25-proxy-user-agent-override/research/proxy-runtime.md","reason":"Check query preservation, redirect handling and runtime verification limits"}

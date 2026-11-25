@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Request masking, safe DOM updates, local mock validation"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Shared transport, provider endpoints and streaming contracts"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing profile generator and proxy routing"}
+{"file":".trellis/tasks/11-25-proxy-user-agent-override/research/cli-profile-headers.md","reason":"Profile header values and enhanced metadata structure"}
+{"file":".trellis/tasks/11-25-proxy-user-agent-override/research/proxy-runtime.md","reason":"Browser UA limitation, URL, CORS, stream and redirect evidence"}
