@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Lazy reference loading, integrity/cache states and safe errors"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Preserve scenario/run snapshot and cancellation contract"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing syncer and Pages deployment"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Same snapshot across source build, artifact, git, deploy and browser"}
+{"file":".trellis/tasks/11-25-lmfpd-auto-sync/research/upstream-contract.md","reason":"Official Actions and upstream validation evidence; latest candidate invalid"}
+{"file":".trellis/spec/backend/lmfpd-auto-sync.md","reason":"Final executable sync, publication, deployment and browser integrity contract"}

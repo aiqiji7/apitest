@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Browser loader and failure states cannot regress"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Validate permissions, candidate binding, commit/deploy and browser pairing"}
+{"file":".trellis/tasks/11-25-lmfpd-auto-sync/research/upstream-contract.md","reason":"Verify independent conformance evidence and upstream mismatch failure"}
+{"file":".trellis/spec/backend/lmfpd-auto-sync.md","reason":"Final command, job, artifact and browser contracts"}
+{"file":".trellis/tasks/11-25-lmfpd-auto-sync/research/real-sync-verification.md","reason":"Public-network no-update and failed-latest evidence; production hashes unchanged"}
