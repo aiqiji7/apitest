@@ -1,0 +1,30 @@
+{
+  "id": "pages-runtime-package",
+  "name": "pages-runtime-package",
+  "title": "隔离 Pages 网站发布范围",
+  "description": "将 Pages 上传内容限制为网站运行文件，作为持续部署500问题的单变量对照，保留部署版本、权限及守卫。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "jie",
+  "assignee": "jie",
+  "createdAt": "2026-11-26",
+  "completedAt": "2026-11-26",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "98bbd47",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".github/workflows/static.yml",
+    "tests/lmfpd-publish-workflows.test.mjs",
+    ".trellis/spec/backend/lmfpd-auto-sync.md"
+  ],
+  "notes": "用户已授权修改并提交本地 Git，由用户推送。功能提交 98bbd47。fix-8 实现和 tre-2 终审已核对整合：8/8 测试、16文件5180423字节暂存与原生Chrome6/6候选一致。按 Trellis 流程归档并记录会话；云端Pages接受结果及500根因尚未证实，未推送或部署。",
+  "meta": {}
+}
