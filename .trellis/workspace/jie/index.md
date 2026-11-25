@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
-- **Last Active**: 2026-10-26
+- **Total Sessions**: 21
+- **Last Active**: 2026-11-25
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~690 | Active |
+| `journal-1.md` | ~730 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-11-25 | 统一模型测试入口与客户端画像代理 | `c4e5e07` | `main` |
 | 20 | 2026-10-26 | 集成 LM Fingerpoint Detector 模型指纹检测 | `ef908a4` | `main` |
 | 19 | 2026-07-17 | 文生图失败提示与默认提示词 | `179cd81` | `main` |
 | 18 | 2026-07-17 | 思考等级更新+图片识别+Images文生图图生图+favicon | `d82996a` | `main` |

@@ -688,3 +688,43 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: 统一模型测试入口与客户端画像代理
+
+**Date**: 2026-11-25
+**Task**: 统一模型测试入口与客户端画像代理
+**Branch**: `main`
+
+### Summary
+
+将客户端画像移至 API 配置，统一结构化输出、大海捞针、上下文容量和模型指纹测试入口，交付支持 UA 覆盖和 SSE 的自建 Worker。
+
+### Main Changes
+
+实现全局 Codex / Claude / Gemini 基础与增强画像、自定义请求头覆盖，以及集中一次应用、运行快照和敏感值遮罩。四项诊断与指纹测试和既有测试同级，共用运行、停止和清空入口；指纹保留真实评分核心、参考库懒加载、手动模式及串并行采样，并补齐 Google 协议。
+
+提供 proxy/worker.js、Cloudflare 部署配置与说明，验证 CORS、完整查询串、UA 实收到达、流式首段、取消传播和重定向阻断。修复收到 200/401 响应头后取消产生迟到结果的问题。
+
+验证：131/131 核心及 Worker 测试、77/77 原生 Chrome 浏览器检查通过；113 次本地上游请求，0 运行时异常。375/768/1024/1440 布局与桌面、手机截图验收通过。提交前核对 8 项源码哈希与最终验收一致。
+
+功能提交 c4e5e07；任务归档提交 9b101b9。用户要求后续 subagent 并发最多 2 个。未推送远端或部署 Cloudflare；验证范围为 Chrome -> Node 代理 -> 本地 HTTP/HTTPS mock，普通测试为抽样覆盖。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c4e5e07` | feat: 统一模型测试入口并支持客户端画像代理 |
+
+### Testing
+
+- [OK] 核心及 Worker 131/131；原生 Chrome 77/77；源码哈希与最终验收一致，提交前差异与上下文校验通过。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
