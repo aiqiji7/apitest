@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/lmfpd-auto-sync.md", "reason": "Preserve the exact-SHA, package, Pages lock and stale-main contracts during the bounded diagnostic experiment."}
+{"file": ".trellis/tasks/archive/2026-11/11-26-pages-deploy-500/research/deployment-evidence.md", "reason": "Use verified failure stages and the reviewed one-run experiment; avoid unsupported code or remote changes."}

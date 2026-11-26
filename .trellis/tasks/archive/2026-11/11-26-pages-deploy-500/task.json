@@ -1,0 +1,30 @@
+{
+  "id": "pages-deploy-500",
+  "name": "pages-deploy-500",
+  "title": "诊断 Pages 失败并分离打包与部署",
+  "description": "Fresh post-incident run reproduced artifact discovery failure; implement the authorized supported build/deploy job split while preserving exact SHA and stale-main protection.",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "ci",
+  "package": null,
+  "priority": "P2",
+  "creator": "jie",
+  "assignee": "jie",
+  "createdAt": "2026-11-26",
+  "completedAt": "2026-11-26",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "6a67311c9e9f37df8d0745c1acf4367a787c82e9",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".github/workflows/static.yml",
+    "tests/lmfpd-publish-workflows.test.mjs",
+    ".trellis/spec/backend/lmfpd-auto-sync.md"
+  ],
+  "notes": "User pushed approved commit 6a67311. Push run 45672581729 succeeded in both build and deploy, finding and deploying the correct artifact 15049529308. Public HTTPS verification matched all 16 runtime files (5,180,423 bytes), root homepage, seven resource references and four fingerprint hashes to the exact target. Implementation and independent review reconciled; local focused suite 10/10 with zero skips. Current publication restored; historical HTTP 500 internals and permanent artifact-visibility reliability are not established. No additional assistant dispatch, rerun or push performed. User subsequently authorized separate archive and journal commits with the instruction 提交git.",
+  "meta": {}
+}
