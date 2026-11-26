@@ -393,6 +393,7 @@ async function main(artifacts) {
   };
   try {
     report.sourceHashes = await sourceHashes();
+    report.testHash = hash(await readFile(script));
     const cert = await readFile(path.join(artifacts, 'loopback-cert.pem'));
     const key = await readFile(path.join(artifacts, 'loopback-key.pem'));
     const spki = createHash('sha256').update(new X509Certificate(cert).publicKey.export({ type: 'spki', format: 'der' })).digest('base64');
@@ -405,7 +406,8 @@ async function main(artifacts) {
         }
         const record = { url: req.url, headers: { ...req.headers }, startedAt: Date.now() };
         staticRequests.push(record);
-        const body = await readFile(file);
+        const body = pathname === '/assets/js/config.js'
+          ? 'window.APP_CONFIG = {apiUrl:"", apiKey:"", model:"test-model"};' : await readFile(file);
         const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
           '.svg': 'image/svg+xml', '.json': 'application/json' };
         const release = () => {
@@ -668,6 +670,11 @@ async function main(artifacts) {
       assert.ok(await cdp.evaluate(() => document.getElementById('capacityBudgetHint').textContent.includes('10')));
       await selectScenario('iq_test_3');
       assert.equal(await cdp.evaluate(() => document.getElementById('capabilityPanel').hidden), true);
+      // Result-priority wide mode folds setup by default; reveal the original
+      // form before asserting that leaving a diagnostic exposes its user input.
+      await cdp.evaluate(() => {
+        if (document.getElementById('workspaceTestControls').hidden) document.getElementById('workspaceSetupToggle').click();
+      });
       assert.equal(await cdp.evaluate(() => document.getElementById('userInput').getClientRects().length > 0), true);
     });
     await check('HTTPS off: native direct IQ with no CLI UA or proxy/control, including configured proxy', async () => {
@@ -1252,6 +1259,7 @@ async function main(artifacts) {
     });
     await check('stable source, native fetch, zero runtime/mock errors and only exact expected safe console messages', async () => {
       assert.deepEqual(await sourceHashes(), report.sourceHashes, 'Source changed during run: rerun after source is stable');
+      assert.equal(hash(await readFile(script)), report.testHash, 'Browser test changed during run');
       assert.deepEqual(cdp.exceptions, []); assert.deepEqual(mock.errors, []); assert.equal(expectedConsoleErrors.length, 2);
       assert.deepEqual(cdp.consoleErrors, expectedConsoleErrors);
       assert.deepEqual(cdp.requests.filter(req => /^https?:/.test(req.url) && new URL(req.url).hostname !== '127.0.0.1'), []);

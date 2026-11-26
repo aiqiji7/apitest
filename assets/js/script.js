@@ -497,17 +497,59 @@
     return el;
   }
 
-  // Scroll helpers: keep latest message aligned to page top
+  const streamedMessageCards = new WeakSet();
+
+  // Capture before content grows so growth is never mistaken for reading history.
+  function captureTimelineFollow() {
+    const column = messageTimeline.closest('.column');
+    if (!column || getComputedStyle(column).overflowY !== 'auto') return null;
+    return { column, follow: column.scrollHeight - column.clientHeight - column.scrollTop <= 32 };
+  }
+
+  function followTimeline(snapshot, content) {
+    if (snapshot) {
+      if (snapshot.follow) {
+        // Per-chunk smooth scrolling lags behind the stream, including its first chunk.
+        snapshot.column.scrollTo({ top: snapshot.column.scrollHeight, behavior: 'instant' });
+      }
+    } else if (content) {
+      // Narrow layouts retain their existing, capped text scrollports.
+      content.scrollTop = content.scrollHeight;
+    }
+  }
+
+  function updateStreamingMessage(card, label, text) {
+    const snapshot = captureTimelineFollow();
+    if (!card) card = addMessage('assistant', label, text);
+    else {
+      const pre = card.querySelector('pre.answer-content');
+      if (pre) pre.textContent = text;
+    }
+    streamedMessageCards.add(card);
+    followTimeline(snapshot, card.querySelector('pre.answer-content'));
+    return card;
+  }
+
+  // Desktop has a dedicated timeline scroller; never move neighboring panes.
   function scrollLatestIntoView() {
     const cards = messageTimeline.querySelectorAll('.card.message');
     if (cards.length === 0) return;
     const last = cards[cards.length - 1];
-    // 将最新消息滚动到页面顶部位置
+    const column = messageTimeline.closest('.column');
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
+    if (column && getComputedStyle(column).overflowY === 'auto') {
+      // Keep the streamed tail (or the reader's chosen position), not the card top.
+      if (streamedMessageCards.has(last)) return;
+      const heading = column.querySelector('h3');
+      const top = column.scrollTop + last.getBoundingClientRect().top - column.getBoundingClientRect().top;
+      column.scrollTo({ top: top - (heading ? heading.offsetHeight : 0) - 8, behavior });
+      return;
+    }
     try {
-      last.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+      last.scrollIntoView({ behavior, block: 'start', inline: 'nearest' });
     } catch { /* 兼容性兜底 */
       const top = window.scrollY + last.getBoundingClientRect().top;
-      window.scrollTo({ top: Math.max(top - 8, 0), behavior: 'smooth' });
+      window.scrollTo({ top: Math.max(top - 8, 0), behavior });
     }
   }
 
@@ -710,6 +752,7 @@
   }
 
   function addMessage(role, label, payload) {
+    const snapshot = captureTimelineFollow();
     const card = document.createElement('div');
     card.className = `card message ${role}`;
     if (role === 'user') {
@@ -761,11 +804,15 @@
     // Keep waiting loader under the latest message while pending
     if (requestPending) { showWaiting(); }
     updateClearBtnState();
+    // Tool turns append new cards between stream chunks; keep following across them.
+    followTimeline(snapshot);
     return card;
   }
 
   function updateMessageCard(card, label, payload) {
     if (!card) return;
+    const streamed = streamedMessageCards.has(card);
+    const snapshot = streamed ? captureTimelineFollow() : null;
     const labelEl = card.querySelector('.label');
     if (labelEl) labelEl.textContent = `· ${label}`;
     const pre = card.querySelector('pre.answer-content');
@@ -773,6 +820,7 @@
       pre.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
     }
     updateHtmlPreviewSection(payload);
+    if (streamed) followTimeline(snapshot, pre);
   }
 
   // 将响应内容规整为文本，用于 HTML 预览检测
@@ -1876,22 +1924,14 @@
 
     const updateAssistantMessage = (chunkText, fullText) => {
       accumulatedText = fullText;
-      if (!assistantCard) {
-        assistantCard = addMessage('assistant', '回答（流式）', fullText);
-      } else {
-        const pre = assistantCard.querySelector('pre.answer-content');
-        if (pre) {
-          pre.textContent = fullText;
-          pre.scrollTop = pre.scrollHeight;
-        }
-      }
+      assistantCard = updateStreamingMessage(assistantCard, '回答（流式）', fullText);
       streamedChunks++;
     };
 
     const updateReasoningMessage = (reasoningChunk, fullReasoning) => {
       accumulatedReasoning = fullReasoning;
       if (!assistantCard) {
-        assistantCard = addMessage('assistant', '回答（流式）', '');
+        assistantCard = updateStreamingMessage(null, '回答（流式）', '');
       }
       updateReasoningInCard(assistantCard, fullReasoning);
     };
@@ -2981,16 +3021,11 @@
               signal
             }, (chunkText, fullText) => {
               accText = fullText;
-              if (!assistantCard) {
-                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
-              } else {
-                const preEl = assistantCard.querySelector('pre.answer-content');
-                if (preEl) preEl.textContent = fullText;
-              }
+              assistantCard = updateStreamingMessage(assistantCard, `模型响应 #${turn}（流式）`, fullText);
             }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
               accReasoning = fullReasoning;
               if (!assistantCard) {
-                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, '');
+                assistantCard = updateStreamingMessage(null, `模型响应 #${turn}（流式）`, '');
               }
               updateReasoningInCard(assistantCard, fullReasoning);
             });
@@ -3181,16 +3216,11 @@
               signal
             }, (chunkText, fullText) => {
               accText = fullText;
-              if (!assistantCard) {
-                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
-              } else {
-                const preEl = assistantCard.querySelector('pre.answer-content');
-                if (preEl) preEl.textContent = fullText;
-              }
+              assistantCard = updateStreamingMessage(assistantCard, `模型响应 #${turn}（流式）`, fullText);
             }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
               accReasoning = fullReasoning;
               if (!assistantCard) {
-                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, '');
+                assistantCard = updateStreamingMessage(null, `模型响应 #${turn}（流式）`, '');
               }
               updateReasoningInCard(assistantCard, fullReasoning);
             });
@@ -3382,16 +3412,11 @@
           try {
             const result = await fetchAndStream(isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint, { method: 'POST', headers: requestHeaders, body: JSON.stringify(gReq), signal }, (chunkText, fullText) => {
               accText = fullText;
-              if (!assistantCard) {
-                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
-              } else {
-                const preEl = assistantCard.querySelector('pre.answer-content');
-                if (preEl) preEl.textContent = fullText;
-              }
+              assistantCard = updateStreamingMessage(assistantCard, `模型响应 #${turn}（流式）`, fullText);
             }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
               accReasoning = fullReasoning;
               if (!assistantCard) {
-                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, '');
+                assistantCard = updateStreamingMessage(null, `模型响应 #${turn}（流式）`, '');
               }
               updateReasoningInCard(assistantCard, fullReasoning);
             });
@@ -3586,16 +3611,11 @@
               signal
             }, (chunkText, fullText) => {
               accText = fullText;
-              if (!assistantCard) {
-                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, fullText);
-              } else {
-                const preEl = assistantCard.querySelector('pre.answer-content');
-                if (preEl) preEl.textContent = fullText;
-              }
+              assistantCard = updateStreamingMessage(assistantCard, `模型响应 #${turn}（流式）`, fullText);
             }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
               accReasoning = fullReasoning;
               if (!assistantCard) {
-                assistantCard = addMessage('assistant', `模型响应 #${turn}（流式）`, '');
+                assistantCard = updateStreamingMessage(null, `模型响应 #${turn}（流式）`, '');
               }
               updateReasoningInCard(assistantCard, fullReasoning);
             });
@@ -3776,16 +3796,11 @@
             signal
           }, (chunkText, fullText) => {
             accText = fullText;
-            if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', fullText);
-            } else {
-              const preEl = assistantCard.querySelector('pre.answer-content');
-              if (preEl) preEl.textContent = fullText;
-            }
+            assistantCard = updateStreamingMessage(assistantCard, '回答（流式）', fullText);
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
             accReasoning = fullReasoning;
             if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', '');
+              assistantCard = updateStreamingMessage(null, '回答（流式）', '');
             }
             updateReasoningInCard(assistantCard, fullReasoning);
           });
@@ -3860,16 +3875,11 @@
         try {
           const result = await fetchAndStream(isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint, { method: 'POST', headers: requestHeaders, body: JSON.stringify(gReq), signal }, (chunkText, fullText) => {
             accText = fullText;
-            if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', fullText);
-            } else {
-              const preEl = assistantCard.querySelector('pre.answer-content');
-              if (preEl) preEl.textContent = fullText;
-            }
+            assistantCard = updateStreamingMessage(assistantCard, '回答（流式）', fullText);
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
             accReasoning = fullReasoning;
             if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', '');
+              assistantCard = updateStreamingMessage(null, '回答（流式）', '');
             }
             updateReasoningInCard(assistantCard, fullReasoning);
           });
@@ -3927,16 +3937,11 @@
         try {
           const result = await fetchAndStream(isStreamEnabled() ? geminiStreamEndpoint : geminiEndpoint, { method: 'POST', headers: requestHeaders, body: JSON.stringify(gReq), signal }, (chunkText, fullText) => {
             accText = fullText;
-            if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', fullText);
-            } else {
-              const preEl = assistantCard.querySelector('pre.answer-content');
-              if (preEl) preEl.textContent = fullText;
-            }
+            assistantCard = updateStreamingMessage(assistantCard, '回答（流式）', fullText);
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
             accReasoning = fullReasoning;
             if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', '');
+              assistantCard = updateStreamingMessage(null, '回答（流式）', '');
             }
             updateReasoningInCard(assistantCard, fullReasoning);
           });
@@ -4019,16 +4024,11 @@
             signal
           }, (chunkText, fullText) => {
             accText = fullText;
-            if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', fullText);
-            } else {
-              const preEl = assistantCard.querySelector('pre.answer-content');
-              if (preEl) preEl.textContent = fullText;
-            }
+            assistantCard = updateStreamingMessage(assistantCard, '回答（流式）', fullText);
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
             accReasoning = fullReasoning;
             if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', '');
+              assistantCard = updateStreamingMessage(null, '回答（流式）', '');
             }
             updateReasoningInCard(assistantCard, fullReasoning);
           });
@@ -4112,16 +4112,11 @@
             signal
           }, (chunkText, fullText) => {
             accText = fullText;
-            if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', fullText);
-            } else {
-              const preEl = assistantCard.querySelector('pre.answer-content');
-              if (preEl) preEl.textContent = fullText;
-            }
+            assistantCard = updateStreamingMessage(assistantCard, '回答（流式）', fullText);
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
             accReasoning = fullReasoning;
             if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', '');
+              assistantCard = updateStreamingMessage(null, '回答（流式）', '');
             }
             updateReasoningInCard(assistantCard, fullReasoning);
           });
@@ -4190,16 +4185,11 @@
             signal
           }, (chunkText, fullText) => {
             accText = fullText;
-            if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', fullText);
-            } else {
-              const preEl = assistantCard.querySelector('pre.answer-content');
-              if (preEl) preEl.textContent = fullText;
-            }
+            assistantCard = updateStreamingMessage(assistantCard, '回答（流式）', fullText);
           }, createOnPhaseCallback(), (reasoningChunk, fullReasoning) => {
             accReasoning = fullReasoning;
             if (!assistantCard) {
-              assistantCard = addMessage('assistant', '回答（流式）', '');
+              assistantCard = updateStreamingMessage(null, '回答（流式）', '');
             }
             updateReasoningInCard(assistantCard, fullReasoning);
           });
@@ -5364,6 +5354,7 @@
     if (!card) return;
     let section = card.querySelector('.reasoning-section');
     if (!reasoningText) return;
+    const snapshot = captureTimelineFollow();
 
     if (!section) {
       const pre = card.querySelector('pre.answer-content');
@@ -5396,15 +5387,16 @@
       const content = section.querySelector('.reasoning-content');
       if (content) {
         content.textContent = reasoningText;
-        // Keep scrollbar at bottom to follow latest reasoning text
-        content.scrollTop = content.scrollHeight;
       }
     }
+    streamedMessageCards.add(card);
+    followTimeline(snapshot, section.querySelector('.reasoning-content'));
   }
 
   // Finalize reasoning section after streaming completes
   function finalizeReasoningInCard(card, reasoningText) {
     if (!card) return;
+    const snapshot = captureTimelineFollow();
     const section = card.querySelector('.reasoning-section');
     if (!section) {
       // No reasoning section was created during streaming, add one now
@@ -5422,6 +5414,7 @@
       const content = section.querySelector('.reasoning-content');
       if (content) content.textContent = reasoningText;
     }
+    followTimeline(snapshot);
   }
 
   // Dead code: fetchAndParse and ensureJsonOrThrow are defined but never called.
@@ -5577,4 +5570,109 @@
 
   // Initial UI update
   updateHttpProxyUI();
+
+  // Disclosure state belongs to this view only; folding never changes request state.
+  const workspace = $('.main-card');
+  const workspaceConfig = $('#workspaceConfig');
+  const workspaceTestControls = $('#workspaceTestControls');
+  const workspaceSetupToggle = $('#workspaceSetupToggle');
+  const workspaceLogsToggle = $('#workspaceLogsToggle');
+  const workspaceMedia = window.matchMedia('(min-width: 1600px) and (min-height: 760px)');
+  const workspacePanePositions = new WeakMap();
+  const workspacePaneScrollers = [workspaceConfig, workspaceTestControls, $('#blocksColumn')]
+    .map(pane => ({ pane, scroller: pane.querySelector('.config-body, .test-form') || pane }));
+  let workspaceSetupOpen = false;
+  let workspaceLogsOpen = false;
+
+  function setWorkspacePaneVisible(pane, visible, trigger) {
+    if (pane.hidden === !visible) return;
+    if (!visible && pane.contains(document.activeElement)) trigger.focus({ preventScroll: true });
+    pane.hidden = !visible;
+  }
+
+  function updateWorkspaceContext() {
+    const scenario = $('#testType .seg-btn.active');
+    const protocol = currentVendor === 'openai' ? (openaiProtocol === 'responses' ? 'Responses' : 'Chat Completions')
+      : ({ anthropic: 'Anthropic', google: 'Google', images: 'Images' }[currentVendor]);
+    const context = $('#workspaceContext');
+    const name = document.createElement('strong');
+    name.textContent = scenario ? scenario.textContent : '当前测试';
+    // Only safe display metadata is repeated here; never mirror connection/key/header fields.
+    const model = sanitizeSensitiveText(modelEl.value.trim());
+    context.replaceChildren(name, document.createTextNode(` · ${protocol}${model ? ' · ' + model : ''}`));
+    context.title = context.textContent;
+    const specialist = document.body.matches('.capability-mode, .fingerprint-mode');
+    if (specialist && document.activeElement === workspaceLogsToggle) workspaceSetupToggle.focus({ preventScroll: true });
+    workspaceLogsToggle.hidden = specialist;
+  }
+
+  function applyWorkspaceView() {
+    const focusedElement = document.activeElement;
+    const wide = workspaceMedia.matches;
+    const restoreFocus = !wide && ($('.workspace-view-controls').contains(focusedElement) ||
+      focusedElement === $('#workspaceEmptySetup'));
+    const snapshot = captureTimelineFollow();
+    // Read every visible pane before any class/hidden change can clamp its offset.
+    workspacePaneScrollers.forEach(({ pane, scroller }) => {
+      if (!scroller.getClientRects().length) return;
+      const offsets = [scroller.scrollLeft, scroller.scrollTop];
+      const saved = workspacePanePositions.get(pane);
+      if (!saved) {
+        workspacePanePositions.set(pane, { target: offsets, applied: offsets.slice() });
+        return;
+      }
+      const style = getComputedStyle(scroller);
+      const scrollable = [
+        /auto|scroll/.test(style.overflowX) && scroller.scrollWidth > scroller.clientWidth,
+        /auto|scroll/.test(style.overflowY) && scroller.scrollHeight > scroller.clientHeight
+      ];
+      offsets.forEach((value, axis) => {
+        // New reader movement wins; hidden/non-scrolling layouts cannot replace it.
+        if (scrollable[axis] && value !== saved.applied[axis]) saved.target[axis] = value;
+      });
+    });
+    const setupVisible = !wide || workspaceSetupOpen;
+    const logsVisible = !wide || workspaceLogsOpen;
+    workspace.classList.toggle('setup-open', setupVisible);
+    workspace.classList.toggle('logs-open', logsVisible);
+    workspaceSetupToggle.setAttribute('aria-expanded', String(setupVisible));
+    workspaceSetupToggle.querySelector('span').textContent = setupVisible ? '收起配置与测试' : '配置与测试';
+    workspaceLogsToggle.setAttribute('aria-expanded', String(logsVisible));
+    workspaceLogsToggle.querySelector('span').textContent = logsVisible ? '收起请求与响应' : '显示请求与响应';
+    setWorkspacePaneVisible(workspaceConfig, setupVisible, workspaceSetupToggle);
+    setWorkspacePaneVisible(workspaceTestControls, setupVisible, workspaceSetupToggle);
+    setWorkspacePaneVisible($('#blocksColumn'), logsVisible, workspaceLogsToggle);
+    updateWorkspaceContext();
+    // Restore only after the whole layout is final, retaining any temporarily clamped target.
+    workspacePaneScrollers.forEach(({ pane, scroller }) => {
+      const saved = workspacePanePositions.get(pane);
+      if (!saved || !scroller.getClientRects().length) return;
+      const [left, top] = saved.target;
+      scroller.scrollTo({ left, top, behavior: 'instant' });
+      saved.applied = [scroller.scrollLeft, scroller.scrollTop];
+    });
+    if (wide) followTimeline(snapshot);
+    // The wide-only triggers disappear on reflow; keep keyboard users on a real control.
+    if (restoreFocus) apiUrlEl.focus();
+  }
+
+  workspaceSetupToggle.addEventListener('click', () => {
+    workspaceSetupOpen = !workspaceSetupOpen;
+    applyWorkspaceView();
+  });
+  $('#workspaceEmptySetup').addEventListener('click', () => {
+    workspaceSetupOpen = true;
+    applyWorkspaceView();
+    // This explicit entry point opens the form; live rendering never takes focus.
+    apiUrlEl.focus({ preventScroll: true });
+  });
+  workspaceLogsToggle.addEventListener('click', () => {
+    workspaceLogsOpen = !workspaceLogsOpen;
+    applyWorkspaceView();
+  });
+  workspaceMedia.addEventListener('change', applyWorkspaceView);
+  window.addEventListener('apitest:scenario-change', updateWorkspaceContext);
+  modelEl.addEventListener('input', updateWorkspaceContext);
+  modelEl.addEventListener('change', updateWorkspaceContext);
+  applyWorkspaceView();
 })();
