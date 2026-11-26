@@ -633,12 +633,14 @@ async function main(artifacts) {
           'fingerprintStopBtn', 'fingerprintScoreBtn'].filter(id => document.getElementById(id)),
         actions: ['testBtn', 'stopTestBtn', 'clearBtn'].map(id => document.querySelectorAll('#' + id).length),
         nativeFetch: /\[native code\]/.test(fetch.toString()), lmfpd: typeof window.LMFPD,
+        proxyUrl: document.getElementById('httpProxyUrl').value,
         enabled: document.getElementById('httpsProxyToggle').checked, storage: { ...localStorage },
       }));
       assert.deepEqual(initial.vendors, ['openai', 'anthropic', 'google', 'images']); assert.equal(initial.global, true);
       assert.deepEqual(initial.obsolete, []); assert.deepEqual(initial.actions, [1, 1, 1]);
       assert.equal(initial.nativeFetch, true); assert.equal(initial.lmfpd, 'undefined');
       assert.equal(initial.enabled, false); assert.deepEqual(initial.storage, {});
+      assert.equal(initial.proxyUrl, 'https://apiprox.160006.xyz');
       assert.ok(!cdp.requests.some(req => /lmfpd\//.test(req.url)));
     });
     await check('four model protocols expose peer diagnostics/fingerprint and IQ; Images excludes them', async () => {

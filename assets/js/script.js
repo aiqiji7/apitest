@@ -138,7 +138,7 @@
   const PROFILE_OVERRIDE_HEADER = 'X-APITest-Override-Headers';
   const sensitiveProfileValues = new Set();
   function getProxyUrl() {
-    return (localStorage.getItem('httpProxyUrl') || '').trim();
+    return (localStorage.getItem('httpProxyUrl') ?? 'https://apiprox.160006.xyz').trim();
   }
   function saveProxyUrl(url) {
     localStorage.setItem('httpProxyUrl', url || '');
