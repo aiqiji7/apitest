@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
+- **Total Sessions**: 24
 - **Last Active**: 2026-11-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~810 | Active |
+| `journal-1.md` | ~854 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-11-26 | 分离 Pages 打包部署并验证发布恢复 | `6a67311` | `main` |
 | 23 | 2026-11-26 | 隔离 Pages 网站发布范围 | `98bbd47` | `main` |
 | 22 | 2026-11-25 | 指纹库每日自动同步与部署 | `2be5a4a` | `main` |
 | 21 | 2026-11-25 | 统一模型测试入口与客户端画像代理 | `c4e5e07` | `main` |
