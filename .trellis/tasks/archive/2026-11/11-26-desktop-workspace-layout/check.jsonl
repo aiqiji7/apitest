@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify responsive UI, streamed results and diagnostics without altering their meaning."}
+{"file":".trellis/spec/frontend/proxy-profile-contract.md","reason":"Guard profile controls, masking and diagnostics against regression from static regrouping."}

@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Preserve scenario controllers, run snapshots and cancellation while regrouping panes."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Keep existing message, payload and streaming presentation contracts."}
