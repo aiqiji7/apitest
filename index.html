@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI API 特殊调用测试</title>
   <link rel="icon" href="assets/favicon.svg?v=20260717" type="image/svg+xml" />
-  <link rel="stylesheet" href="assets/css/styles.css?v=20261126-results" />
+  <link rel="stylesheet" href="assets/css/styles.css?v=20261127-three-pane" />
 </head>
 <body>
   <div class="container">
@@ -196,35 +196,20 @@
               </div>
             </div>
           </div>
+          </div>
 
+          <div class="btn-row">
+            <button class="btn btn-primary" id="testBtn">运行测试</button>
+            <button type="button" class="btn fingerprint-btn-danger" id="stopTestBtn" disabled>停止</button>
+            <button class="btn" id="clearBtn">清空结果</button>
+            <div id="waitingContainer" class="waiting-container"></div>
           </div>
         </div>
 
         <section class="workspace-results" aria-labelledby="resultsTitle">
-          <div class="results-header">
-            <h2 id="resultsTitle" class="pane-title"><span class="pane-index" aria-hidden="true">03</span>测试结果</h2>
-            <div class="workspace-view-controls" role="group" aria-label="结果视图">
-              <button type="button" id="workspaceSetupToggle" class="workspace-disclosure" aria-expanded="false" aria-controls="workspaceConfig workspaceTestControls">
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 3v6m8 0v6m-6 0v6"/></svg>
-                <span>配置与测试</span>
-              </button>
-              <button type="button" id="workspaceLogsToggle" class="workspace-disclosure" aria-expanded="false" aria-controls="blocksColumn">
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M13 4v16M6 9h4m-4 4h4"/></svg>
-                <span>显示请求与响应</span>
-              </button>
-            </div>
-          </div>
+          <h2 id="resultsTitle" class="pane-title"><span class="pane-index" aria-hidden="true">03</span>测试结果</h2>
           <div id="errorMessage" class="error-message" role="alert"></div>
-          <div class="workspace-actionbar">
-            <p id="workspaceContext" class="workspace-context" aria-label="当前测试">使用当前配置运行测试</p>
-            <div class="btn-row">
-              <button class="btn btn-primary" id="testBtn">运行测试</button>
-              <button type="button" class="btn fingerprint-btn-danger" id="stopTestBtn" disabled>停止</button>
-              <button class="btn" id="clearBtn">清空结果</button>
-              <div id="waitingContainer" class="waiting-container"></div>
-            </div>
-          </div>
-          <section id="fingerprintPanel" class="fingerprint-panel" hidden aria-labelledby="fingerprintTitle" tabindex="0">
+          <section id="fingerprintPanel" class="fingerprint-panel" hidden aria-labelledby="fingerprintTitle">
             <div class="fingerprint-header">
               <div class="fingerprint-heading">
                 <h3 id="fingerprintTitle">模型指纹检测</h3>
@@ -268,14 +253,14 @@
 
             <div id="fingerprintError" class="fingerprint-error" role="alert" hidden></div>
 
-            <div class="fingerprint-section fingerprint-samples-section">
-              <div class="fingerprint-section-head">
-                <h4>样本</h4>
+            <details id="fingerprintSamplesDisclosure" class="fingerprint-section fingerprint-samples-section fingerprint-samples-disclosure">
+              <summary>
+                <span class="fingerprint-samples-title">样本（3 条）</span>
                 <span class="fingerprint-section-hint">三条独立题目，每条至少 80 个有效数字</span>
-              </div>
+              </summary>
               <div id="fingerprintSamples" class="fingerprint-samples"></div>
               <p id="fingerprintManualHint" class="fingerprint-manual-hint" hidden>把三条回答分别粘贴到上面的样本卡，然后点击“评分”。</p>
-            </div>
+            </details>
 
             <div class="fingerprint-section fingerprint-result-section">
               <div class="fingerprint-section-head">
@@ -292,11 +277,11 @@
             </div>
           </section>
 
-          <section id="capabilityPanel" class="fingerprint-panel capability-panel" hidden aria-labelledby="capabilityTitle" tabindex="0">
+          <section id="capabilityPanel" class="fingerprint-panel capability-panel" hidden aria-labelledby="capabilityTitle">
             <div class="fingerprint-header">
               <div class="fingerprint-heading">
                 <h3 id="capabilityTitle">结构化输出</h3>
-                <p class="fingerprint-intro" id="capabilityIntro">使用固定 schema 检查返回结构。点击“运行测试”开始。</p>
+                <p class="fingerprint-intro" id="capabilityIntro">使用固定 schema 检查返回结构。点击上方“运行测试”开始。</p>
               </div>
             </div>
             <p id="capabilityProtocolHint" class="diagnostic-context-hint"></p>
@@ -350,7 +335,7 @@
                 <span class="fingerprint-section-hint">失败项会给出所属错误类别与建议</span>
               </div>
               <div id="capabilityResults" class="capability-results">
-                <p class="fingerprint-empty">点击“运行测试”开始。</p>
+                <p class="fingerprint-empty">点击上方“运行测试”开始。</p>
               </div>
             </div>
 
@@ -370,10 +355,14 @@
 
             <div class="fingerprint-caveat">输入规模与容量上下界使用本地估算（中文约 1 字 1 token，其它约 4 字符 1 token）。服务端报告的输入用量在搜索过程中单独标注，可能采用不同口径。容量测试会产生多次真实请求，请确认额度充足。</div>
           </section>
-
         <div class="split-columns">
           <div class="column" id="timelineColumn" role="region" aria-labelledby="timelineTitle" tabindex="0">
             <h3 id="timelineTitle">轮次与消息</h3>
+            <div id="messageTimeline" class="timeline"></div>
+          </div>
+          <div class="column" id="blocksColumn" role="region" aria-labelledby="blocksTitle" tabindex="0">
+            <h3 id="blocksTitle">请求与响应</h3>
+            <div id="blocksContainer" class="blocks-container"></div>
             <div id="htmlPreviewSection" class="html-preview-section" style="display:none;">
               <div class="html-preview-header">
                 <span class="html-preview-title">HTML 预览</span>
@@ -384,23 +373,8 @@
               </div>
               <div id="htmlPreviewContainer" class="html-preview-container"></div>
             </div>
-            <div id="messageTimeline" class="timeline"></div>
-            <p class="output-empty">
-              <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M4 4h16v12H9l-5 4z"/><path d="M8 8h8M8 12h5"/></svg>
-              <strong>在这里查看测试结果</strong><span>先配置连接与测试，再运行查看对话、工具调用和模型回答。</span>
-              <button type="button" id="workspaceEmptySetup" class="btn btn-secondary" aria-controls="workspaceConfig workspaceTestControls">配置与测试</button>
-            </p>
-          </div>
-          <div class="column" id="blocksColumn" role="region" aria-labelledby="blocksTitle" tabindex="0">
-            <h3 id="blocksTitle">请求与响应</h3>
-            <div id="blocksContainer" class="blocks-container"></div>
-            <p class="output-empty">
-              <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5H6v5l-2 2 2 2v5h2m8-14h2v5l2 2-2 2v5h-2"/></svg>
-              <strong>暂无请求记录</strong><span>发送请求后，可在这里展开并对照请求与返回内容。</span>
-            </p>
           </div>
         </div>
-        </section>
       </section>
     </main>
   </div>
@@ -464,7 +438,7 @@
 
   <script src="assets/js/config.js?v=20260625"></script>
   <script src="assets/js/testing-core.js?v=20261125"></script>
-  <script src="assets/js/script.js?v=20261126-results"></script>
+  <script src="assets/js/script.js?v=20261127-three-pane"></script>
   <script src="assets/js/fingerprint.js?v=20261125-autosync-2"></script>
   <script src="assets/js/capability.js?v=20261125"></script>
 </body>
